@@ -1,5 +1,8 @@
-use std::cmp::{max, min};
 use crate::util::select_sample;
+use mpi::topology::SystemCommunicator;
+use mpi::traits::Communicator;
+use std::cmp::{max, min};
+use crate::p_inefficient_sort;
 
 const LOCAL_SORT_THRESHOLD: usize = 512;
 
@@ -8,7 +11,7 @@ const LOCAL_SORT_THRESHOLD: usize = 512;
 /// Guarantees that all data is still present in input array, but may be sorted.
 ///
 /// # Parameters
-/// - `data` a mutable slice of data. May can sorted in-place, hence the mutability
+/// - `data` a mutable slice of data. May be sorted in-place, hence the mutability
 /// - `k` amount of elements to select from `data`. Must not be greater than length of `data`.
 ///
 /// # Returns
@@ -66,12 +69,36 @@ pub fn select_k(data: &mut [u64], k: usize) -> Vec<u64> {
     }
 }
 
+/// Parallel adaption of Blum et al.'s Las-Vegas-algorithm to select the k smallest elements in a
+/// distributed set. Chernoff bound guarantees constant number of recursions with high probability.
+/// Guarantees that all data is still present in input array, but may be sorted.
+///
+pub fn p_select_k(comm: &SystemCommunicator, data: &mut [u64], k: usize) {
+    let world_size = comm.size() as usize;
+    let sample_size = 8; // tuning parameter
+    let delta = 2; // tuning parameter
+    let mut sample = vec![0; sample_size];
+
+    select_sample(data, &mut sample);
+
+    // todo instead of inefficient sort, redistribute and then complicated bound selection, select
+    //  the bound while sorting, OR use ranking instead and broadcast the bounds
+    p_inefficient_sort(comm, &mut sample);
+
+    let ratio = k as f64 / data.len() as f64;
+    let bound = (ratio * LOCAL_SORT_THRESHOLD as f64) as usize;
+
+    // local bucket sort
+
+    // select elements using recursion and inefficient sorting
+}
+
 #[cfg(test)]
 mod tests {
-    use rand::distributions::Uniform;
-    use rand::{Rng, thread_rng};
-    use super::LOCAL_SORT_THRESHOLD;
     use super::select_k;
+    use super::LOCAL_SORT_THRESHOLD;
+    use rand::distributions::Uniform;
+    use rand::{thread_rng, Rng};
 
     #[test]
     fn test_select_k() {
