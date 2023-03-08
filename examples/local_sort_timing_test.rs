@@ -2,8 +2,8 @@ use std::env;
 use std::process::exit;
 use std::time::Instant;
 
-use rand::{Rng, thread_rng};
 use rand::distributions::Uniform;
+use rand::{thread_rng, Rng};
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -24,7 +24,6 @@ fn main() {
     // generate random data
     let mut rng = thread_rng();
     let uniform = Uniform::from(0..u64::MAX);
-
 
     let mut data = Vec::with_capacity(initial_data_amount);
     for _ in 0..initial_data_amount {

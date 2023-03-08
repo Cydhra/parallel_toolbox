@@ -1,5 +1,5 @@
 use rand::distributions::Uniform;
-use rand::{Rng, thread_rng};
+use rand::{thread_rng, Rng};
 
 /// Select a uniformly random sample from a dataset. The given buffer will be filled with the sample
 ///

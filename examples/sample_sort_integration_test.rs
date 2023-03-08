@@ -1,8 +1,8 @@
-use std::env;
-use std::process::exit;
 use mpi::traits::{Communicator, Destination, Source};
 use rand::distributions::Uniform;
 use rand::{thread_rng, Rng};
+use std::env;
+use std::process::exit;
 use std::time::Instant;
 
 use parallel_toolbox::p_sample_sort;
