@@ -3,8 +3,8 @@ use std::borrow::Borrow;
 use mpi::datatype::{Partition, PartitionMut};
 use mpi::topology::SystemCommunicator;
 use mpi::traits::{Communicator, CommunicatorCollectives, Root};
-use rand::{Rng, thread_rng};
 use rand::distributions::Uniform;
+use rand::{thread_rng, Rng};
 
 const INEFFICIENT_SORT_THRESHOLD: usize = 512;
 
@@ -48,23 +48,30 @@ pub fn p_sample_sort(comm: &SystemCommunicator, data: &[u64], total_data: usize)
     }
 
     // calculate offsets in partitioned buffer
-    let displs: Vec<i32> = counts.iter().scan(0, |acc, i| {
-        let tmp = *acc;
-        *acc += *i;
-        Some(tmp)
-    }).collect();
+    let displs: Vec<i32> = counts
+        .iter()
+        .scan(0, |acc, i| {
+            let tmp = *acc;
+            *acc += *i;
+            Some(tmp)
+        })
+        .collect();
 
     // exchange counts and displacements to allow receiving prepared data
     let mut recv_counts: Vec<i32> = vec![0; processes];
     comm.all_to_all_into(&counts, &mut recv_counts);
-    let recv_displs: Vec<i32> = recv_counts.iter().scan(0, |acc, i| {
-        let tmp = *acc;
-        *acc += *i;
-        Some(tmp)
-    }).collect();
+    let recv_displs: Vec<i32> = recv_counts
+        .iter()
+        .scan(0, |acc, i| {
+            let tmp = *acc;
+            *acc += *i;
+            Some(tmp)
+        })
+        .collect();
 
     let mut recv_buffer = vec![0; recv_counts.iter().sum::<i32>() as usize];
-    let mut recv_partition = PartitionMut::new(&mut recv_buffer, recv_counts.borrow(), recv_displs.borrow());
+    let mut recv_partition =
+        PartitionMut::new(&mut recv_buffer, recv_counts.borrow(), recv_displs.borrow());
 
     // all to all exchange data and then quicksort it locally
     let partition = Partition::new(&partioned_buffer, counts.borrow(), displs.borrow());
@@ -99,7 +106,11 @@ fn select_pivots(comm: &SystemCommunicator, data: &mut [u64], out: &mut [u64]) {
     let sample_len = data.len();
     let proc_count = comm.size() as usize;
 
-    assert_eq!((out.len() + 1), proc_count, "output buffer must have capacity for number of processors minus 1");
+    assert_eq!(
+        (out.len() + 1),
+        proc_count,
+        "output buffer must have capacity for number of processors minus 1"
+    );
 
     if data.len() <= INEFFICIENT_SORT_THRESHOLD {
         let root = comm.process_at_rank(0);
@@ -142,6 +153,9 @@ mod tests {
         let expected = [3, 4, 5, 6, 16, 30, 53, 574, 2342, 4935];
 
         assert_eq!(expected.len(), result.len(), "Result has wrong size");
-        assert!(expected.iter().zip(result.iter()).all(|(a, b)| a == b), "Result does not match expected array");
+        assert!(
+            expected.iter().zip(result.iter()).all(|(a, b)| a == b),
+            "Result does not match expected array"
+        );
     }
 }
