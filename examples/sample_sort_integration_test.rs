@@ -9,7 +9,7 @@ fn main() {
     // generate random data
     let mut rng = thread_rng();
     let uniform = Uniform::from(0..u64::MAX);
-    let initial_data_amount = 1 << 22;
+    let initial_data_amount = 1 << 24;
 
     let mut data = vec![0u64; initial_data_amount];
     for i in 0..data.len() {
