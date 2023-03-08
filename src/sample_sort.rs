@@ -3,8 +3,8 @@ use std::borrow::Borrow;
 use mpi::datatype::{Partition, PartitionMut};
 use mpi::topology::SystemCommunicator;
 use mpi::traits::{Communicator, CommunicatorCollectives, Root};
-use rand::distributions::Uniform;
-use rand::{thread_rng, Rng};
+
+use crate::util::select_sample;
 
 const INEFFICIENT_SORT_THRESHOLD: usize = 512;
 
@@ -79,20 +79,6 @@ pub fn p_sample_sort(comm: &SystemCommunicator, data: &[u64], total_data: usize)
     recv_buffer.sort_unstable();
 
     return recv_buffer;
-}
-
-/// Select a uniformly random sample from a dataset. The given buffer will be filled with the sample
-///
-/// # Parameters
-/// - `data` data to select from
-/// - `buf` output buffer which is filled with the sample
-fn select_sample(data: &[u64], buf: &mut [u64]) {
-    let mut rng = thread_rng();
-    let uniform = Uniform::from(0..data.len());
-
-    for i in 0..buf.len() {
-        buf[i] = data[rng.sample(uniform)]
-    }
 }
 
 /// Select p - 1 pivots from a set of data samples that can then be used to perform a sample sort
