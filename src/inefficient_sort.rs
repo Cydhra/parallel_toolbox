@@ -26,6 +26,22 @@ pub fn p_inefficient_sort(comm: &SystemCommunicator, data: &mut [u64]) {
     }
 }
 
+pub fn p_matrix_sort(comm: &SystemCommunicator, data: &mut [u64]) {
+    let rank = comm.rank() as usize;
+    let world_size = comm.size() as usize;
+    let matrix_size = f64::sqrt(world_size as f64) as usize;
+    assert_eq!(
+        matrix_size * matrix_size,
+        world_size,
+        "matrix sort only works if the processor count is a square number"
+    );
+
+    let row = rank / matrix_size;
+    let column = rank % matrix_size;
+
+    // todo split comm into groups
+}
+
 #[cfg(test)]
 mod tests {
     use crate::p_inefficient_sort;
@@ -39,6 +55,9 @@ mod tests {
         p_inefficient_sort(&world, &mut data);
         let expected = [1, 2, 4, 4, 6, 7, 23, 23, 23, 36, 234, 234, 234, 1362u64];
         assert_eq!(expected.len(), data.len());
-        expected.iter().zip(data.iter()).for_each(|(i, j)| assert_eq!(*i, *j));
+        expected
+            .iter()
+            .zip(data.iter())
+            .for_each(|(i, j)| assert_eq!(*i, *j));
     }
 }
