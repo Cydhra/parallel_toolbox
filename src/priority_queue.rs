@@ -1,8 +1,8 @@
 use crate::util::select_sample;
+use mpi::collective::SystemOperation;
 use mpi::topology::SystemCommunicator;
-use mpi::traits::Communicator;
+use mpi::traits::{Communicator, CommunicatorCollectives, Equivalence, Root};
 use std::cmp::{max, min};
-use crate::p_inefficient_sort;
 
 const LOCAL_SORT_THRESHOLD: usize = 512;
 
@@ -71,32 +71,113 @@ pub fn select_k(data: &mut [u64], k: usize) -> Vec<u64> {
 
 /// Parallel adaption of Blum et al.'s Las-Vegas-algorithm to select the k smallest elements in a
 /// distributed set. Chernoff bound guarantees constant number of recursions with high probability.
-/// Guarantees that all data is still present in input array, but may be sorted.
-///
-pub fn p_select_k(comm: &SystemCommunicator, data: &mut [u64], k: usize) {
-    let world_size = comm.size() as usize;
+/// Input data must not be an empty slice.
+pub fn p_select_k(comm: &SystemCommunicator, data: &[u64], k: usize) -> Vec<u64> {
+    // todo this is detrimental, if one process happens to have only k - i elements, and all of them are among the k
+    //  smallest, because it will continue the recursion on an empty slice. So this must be supported!
+    assert!(data.len() > 0);
+
     let sample_size = 8; // tuning parameter
     let delta = 2; // tuning parameter
     let mut sample = vec![0; sample_size];
 
     select_sample(data, &mut sample);
 
-    // todo instead of inefficient sort, redistribute and then complicated bound selection, select
-    //  the bound while sorting, OR use ranking instead and broadcast the bounds
-    p_inefficient_sort(comm, &mut sample);
-
     let ratio = k as f64 / data.len() as f64;
-    let bound = (ratio * LOCAL_SORT_THRESHOLD as f64) as usize;
+    let bound = (ratio * sample_size as f64) as usize;
+    let (lower_pivot, upper_pivot) = local_pivot_search(comm, &sample, bound, delta);
 
     // local bucket sort
+    let mut lower_bucket = Vec::new();
+    let mut middle_bucket = Vec::new();
+    let mut upper_bucket = Vec::new();
 
-    // select elements using recursion and inefficient sorting
+    for n in data {
+        if *n < lower_pivot {
+            lower_bucket.push(*n);
+        } else if *n > upper_pivot {
+            upper_bucket.push(*n);
+        } else {
+            middle_bucket.push(*n);
+        }
+    }
+
+    let mut low_bucket_size = 0;
+    let mut mid_bucket_size = 0;
+
+    // todo replace with a single reduce that operates on vectors
+    comm.all_reduce_into(
+        &lower_bucket.len(),
+        &mut low_bucket_size,
+        SystemOperation::sum(),
+    );
+    comm.all_reduce_into(
+        &middle_bucket.len(),
+        &mut mid_bucket_size,
+        SystemOperation::sum(),
+    );
+
+    if low_bucket_size > k {
+        p_select_k(comm, &mut lower_bucket, k)
+    } else {
+        if low_bucket_size + mid_bucket_size < k {
+            lower_bucket.append(&mut middle_bucket);
+            lower_bucket.append(&mut select_k(&mut upper_bucket, k - low_bucket_size));
+            lower_bucket
+        } else {
+            lower_bucket.append(&mut select_k(&mut middle_bucket, k - low_bucket_size));
+            lower_bucket
+        }
+    }
+}
+
+/// Adaption of inefficient sorting algorithm that collects all elements on one processor, but instead of
+/// redistributing them, it will select the pivots for the selection algorithm and broadcast only those.
+/// # Parameters
+/// - `comm` mpi communicator
+/// - `sample` sample buffer, must be of equal length in all clients
+/// - `bound` the estimated k-bound in the sample
+/// - `delta` the delta value added and subtracted from the estimated bound to gauge the location of the k boundary
+fn local_pivot_search(
+    comm: &SystemCommunicator,
+    sample: &[u64],
+    bound: usize,
+    delta: usize,
+) -> (u64, u64) {
+    let rank = comm.rank() as usize;
+    let world_size = comm.size() as usize;
+    let mut recv_buffer = vec![0u64; sample.len() * world_size];
+
+    let root = comm.process_at_rank(0);
+
+    #[derive(Equivalence)]
+    struct Pivots(u64, u64);
+    let mut pivots = Pivots(0, 0);
+
+    if rank == 0 {
+        root.gather_into_root(sample, &mut recv_buffer);
+        recv_buffer.sort_unstable();
+
+        let lower_bound = max((bound as isize - delta as isize), 0) as usize;
+        let upper_bound = min(bound + delta, sample.len() - 1);
+
+        pivots.0 = recv_buffer[lower_bound];
+        pivots.1 = recv_buffer[upper_bound];
+
+        root.broadcast_into(&mut pivots);
+    } else {
+        root.gather_into(sample);
+        root.broadcast_into(&mut pivots);
+    }
+
+    (pivots.0, pivots.1)
 }
 
 #[cfg(test)]
 mod tests {
     use super::select_k;
     use super::LOCAL_SORT_THRESHOLD;
+    use crate::p_select_k;
     use rand::distributions::Uniform;
     use rand::{thread_rng, Rng};
 
@@ -124,6 +205,35 @@ mod tests {
         data.push(2);
         data.push(3);
         let smallest = select_k(&mut data, 3);
+        assert_eq!(3, smallest.len());
+        assert!(smallest.contains(&1) && smallest.contains(&2) && smallest.contains(&3))
+    }
+
+    /// These are some sanity checks. Since only one process is used, the parallel features aren't tested
+    #[test]
+    fn test_p_select_k() {
+        let universe = mpi::initialize().unwrap();
+        let world = universe.world();
+
+        let select_single = p_select_k(&world, &[1], 1);
+        assert_eq!(1, select_single.len());
+        assert_eq!(1, select_single[0]);
+
+        let select_multiple = p_select_k(&world, &[1, 10, 3, 5, 6, 1, 2], 2);
+        assert_eq!(2, select_multiple.len());
+        assert_eq!(1, select_multiple[0]);
+        assert_eq!(1, select_multiple[1]);
+
+        let mut rng = thread_rng();
+        let uniform = Uniform::from(10..100);
+        let mut data = Vec::with_capacity(2 * LOCAL_SORT_THRESHOLD);
+        for _ in 0..2 * LOCAL_SORT_THRESHOLD {
+            data.push(rng.sample(&uniform));
+        }
+        data.push(1);
+        data.push(2);
+        data.push(3);
+        let smallest = p_select_k(&world, &data, 3);
         assert_eq!(3, smallest.len());
         assert!(smallest.contains(&1) && smallest.contains(&2) && smallest.contains(&3))
     }
