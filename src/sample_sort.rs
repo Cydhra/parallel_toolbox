@@ -44,7 +44,7 @@ pub fn p_sample_sort(comm: &SystemCommunicator, data: &mut [u64], total_data: us
     let mut displs: Vec<i32> = Vec::with_capacity(processes);
     let mut offset: usize = 0;
 
-    for mut buffer in send_buffers.into_iter() {
+    for buffer in send_buffers.into_iter() {
         counts.push(buffer.len() as i32);
         displs.push(offset as i32);
 
