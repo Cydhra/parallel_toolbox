@@ -73,32 +73,31 @@ pub fn select_k(data: &mut [u64], k: usize) -> Vec<u64> {
 /// distributed set. Chernoff bound guarantees constant number of recursions with high probability.
 /// Input data must not be an empty slice.
 pub fn p_select_k(comm: &SystemCommunicator, data: &[u64], k: usize) -> Vec<u64> {
-    // todo this is detrimental, if one process happens to have only k - i elements, and all of them are among the k
-    //  smallest, because it will continue the recursion on an empty slice. So this must be supported!
-    assert!(data.len() > 0);
-
     let sample_size = 8; // tuning parameter
     let delta = 2; // tuning parameter
-    let mut sample = vec![0; sample_size];
 
-    select_sample(data, &mut sample);
-
-    let ratio = k as f64 / data.len() as f64;
-    let bound = (ratio * sample_size as f64) as usize;
-    let (lower_pivot, upper_pivot) = local_pivot_search(comm, &sample, bound, delta);
-
-    // local bucket sort
+    // prepare local buckets
     let mut lower_bucket = Vec::new();
     let mut middle_bucket = Vec::new();
     let mut upper_bucket = Vec::new();
 
-    for n in data {
-        if *n < lower_pivot {
-            lower_bucket.push(*n);
-        } else if *n > upper_pivot {
-            upper_bucket.push(*n);
-        } else {
-            middle_bucket.push(*n);
+    if data.len() > 0 {
+        let mut sample = vec![0; sample_size];
+        select_sample(data, &mut sample);
+
+        let ratio = k as f64 / data.len() as f64;
+        let bound = (ratio * sample_size as f64) as usize;
+        let (lower_pivot, upper_pivot) = local_pivot_search(comm, &sample, bound, delta);
+
+        // local bucket sort
+        for n in data {
+            if *n < lower_pivot {
+                lower_bucket.push(*n);
+            } else if *n > upper_pivot {
+                upper_bucket.push(*n);
+            } else {
+                middle_bucket.push(*n);
+            }
         }
     }
 
@@ -158,7 +157,7 @@ fn local_pivot_search(
         root.gather_into_root(sample, &mut recv_buffer);
         recv_buffer.sort_unstable();
 
-        let lower_bound = max((bound as isize - delta as isize), 0) as usize;
+        let lower_bound = max(bound as isize - delta as isize, 0) as usize;
         let upper_bound = min(bound + delta, sample.len() - 1);
 
         pivots.0 = recv_buffer[lower_bound];
@@ -223,6 +222,9 @@ mod tests {
         assert_eq!(2, select_multiple.len());
         assert_eq!(1, select_multiple[0]);
         assert_eq!(1, select_multiple[1]);
+
+        let select_none = p_select_k(&world, &[], 0);
+        assert_eq!(0, select_none.len());
 
         let mut rng = thread_rng();
         let uniform = Uniform::from(10..100);
