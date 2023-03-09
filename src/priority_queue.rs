@@ -99,6 +99,9 @@ pub fn p_select_k(comm: &SystemCommunicator, data: &[u64], k: usize) -> Vec<u64>
                 middle_bucket.push(*n);
             }
         }
+    } else {
+        // participate at local pivot search without contribution
+        local_pivot_search(comm, &vec![0; sample_size], 0, 0);
     }
 
     let mut low_bucket_size = 0;
@@ -157,8 +160,20 @@ fn local_pivot_search(
         root.gather_into_root(sample, &mut recv_buffer);
         recv_buffer.sort_unstable();
 
-        let lower_bound = max(bound as isize - delta as isize, 0) as usize;
-        let upper_bound = min(bound + delta, sample.len() - 1);
+        let mut lower_bound = max(bound as isize - delta as isize, 0) as usize;
+        let mut upper_bound = min(bound + delta, sample.len() - 1);
+
+        // if the buffer contains values greater than zero, dont accept zero as a pivot, which might happen if some
+        // clients did not provide pivots
+        if recv_buffer[recv_buffer.len() - 1] > 0 {
+            while recv_buffer[lower_bound] == 0 {
+                lower_bound += 1;
+            }
+
+            while upper_bound <= lower_bound && upper_bound < recv_buffer.len() - 1 {
+                upper_bound += 1;
+            }
+        }
 
         pivots.0 = recv_buffer[lower_bound];
         pivots.1 = recv_buffer[upper_bound];
