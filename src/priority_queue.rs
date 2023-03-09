@@ -1,3 +1,4 @@
+use crate::p_inefficient_sort;
 use crate::util::select_sample;
 use mpi::collective::SystemOperation;
 use mpi::topology::SystemCommunicator;
@@ -60,7 +61,10 @@ pub fn select_k(data: &mut [u64], k: usize) -> Vec<u64> {
     } else {
         if lower_bucket.len() + middle_bucket.len() < k {
             lower_bucket.append(&mut middle_bucket);
-            lower_bucket.append(&mut select_k(&mut upper_bucket, k - lower_bucket.len()));
+            lower_bucket.append(&mut select_k(
+                &mut upper_bucket,
+                k - lower_bucket.len() - middle_bucket.len(),
+            ));
             lower_bucket
         } else {
             lower_bucket.append(&mut select_k(&mut middle_bucket, k - lower_bucket.len()));
@@ -76,7 +80,14 @@ pub fn p_select_k(comm: &SystemCommunicator, data: &[u64], k: usize) -> Vec<u64>
     let sample_size = 8; // tuning parameter
     let delta = 2; // tuning parameter
 
-    // prepare local buckets
+    // check if the data amount is small enough to do a local search
+    let mut global_size = 0;
+    comm.all_reduce_into(&data.len(), &mut global_size, SystemOperation::sum());
+    if global_size < LOCAL_SORT_THRESHOLD {
+        todo!("do an inefficient ranking and then just return the k smallest elements from their respective lists")
+    }
+
+    // prepare local buckets and recurse on them
     let mut lower_bucket = Vec::new();
     let mut middle_bucket = Vec::new();
     let mut upper_bucket = Vec::new();
@@ -100,7 +111,7 @@ pub fn p_select_k(comm: &SystemCommunicator, data: &[u64], k: usize) -> Vec<u64>
             }
         }
     } else {
-        // participate at local pivot search without contribution
+        // participate at local pivot search without contribution, the contributed zeros are ignored in pivot search
         local_pivot_search(comm, &vec![0; sample_size], 0, 0);
     }
 
@@ -124,10 +135,18 @@ pub fn p_select_k(comm: &SystemCommunicator, data: &[u64], k: usize) -> Vec<u64>
     } else {
         if low_bucket_size + mid_bucket_size < k {
             lower_bucket.append(&mut middle_bucket);
-            lower_bucket.append(&mut select_k(&mut upper_bucket, k - low_bucket_size));
+            lower_bucket.append(&mut p_select_k(
+                comm,
+                &mut upper_bucket,
+                k - low_bucket_size - mid_bucket_size,
+            ));
             lower_bucket
         } else {
-            lower_bucket.append(&mut select_k(&mut middle_bucket, k - low_bucket_size));
+            lower_bucket.append(&mut p_select_k(
+                comm,
+                &mut middle_bucket,
+                k - low_bucket_size,
+            ));
             lower_bucket
         }
     }
