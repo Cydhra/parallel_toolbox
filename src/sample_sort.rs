@@ -19,7 +19,7 @@ const INEFFICIENT_SORT_THRESHOLD: usize = 512;
 /// - `total_data` total amount of data distributed over all processors. This value need not be
 /// exact, however underestimating will lead to a worse distribution of data across processors, and
 /// overestimating will slow down the algorithm.
-pub fn p_sample_sort(comm: &SystemCommunicator, data: &[u64], total_data: usize) -> Vec<u64> {
+pub fn p_sample_sort(comm: &SystemCommunicator, data: &mut [u64], total_data: usize) -> Vec<u64> {
     let processes = comm.size() as usize;
     let data_per_client: f32 = total_data as f32 / processes as f32;
     let sample_size = (16f32 * data_per_client.ln()) as usize;
@@ -40,22 +40,17 @@ pub fn p_sample_sort(comm: &SystemCommunicator, data: &[u64], total_data: usize)
     }
 
     // append all send buffers into a contiguous buffer for MPI, and store counts and displacements
-    let mut partioned_buffer = Vec::with_capacity(data.len());
     let mut counts: Vec<i32> = Vec::with_capacity(processes);
+    let mut displs: Vec<i32> = Vec::with_capacity(processes);
+    let mut offset: usize = 0;
+
     for mut buffer in send_buffers.into_iter() {
         counts.push(buffer.len() as i32);
-        partioned_buffer.append(&mut buffer);
-    }
+        displs.push(offset as i32);
 
-    // calculate offsets in partitioned buffer
-    let displs: Vec<i32> = counts
-        .iter()
-        .scan(0, |acc, i| {
-            let tmp = *acc;
-            *acc += *i;
-            Some(tmp)
-        })
-        .collect();
+        data[offset..offset + buffer.len()].copy_from_slice(&buffer[..]);
+        offset += buffer.len();
+    }
 
     // exchange counts and displacements to allow receiving prepared data
     let mut recv_counts: Vec<i32> = vec![0; processes];
@@ -74,7 +69,7 @@ pub fn p_sample_sort(comm: &SystemCommunicator, data: &[u64], total_data: usize)
         PartitionMut::new(&mut recv_buffer, recv_counts.borrow(), recv_displs.borrow());
 
     // all to all exchange data and then quicksort it locally
-    let partition = Partition::new(&partioned_buffer, counts.borrow(), displs.borrow());
+    let partition = Partition::new(data, counts.borrow(), displs.borrow());
     comm.all_to_all_varcount_into(&partition, &mut recv_partition);
     recv_buffer.sort_unstable();
 

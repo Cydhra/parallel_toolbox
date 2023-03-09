@@ -40,7 +40,7 @@ fn main() {
 
     // call sorting algorithm
     let start = Instant::now();
-    let data = p_sample_sort(&world, &data, initial_data_amount);
+    let data = p_sample_sort(&world, &mut data, initial_data_amount);
     println!(
         "process {} sorted {} of {} qwords in {} ms",
         rank,
