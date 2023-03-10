@@ -1,3 +1,6 @@
+use std::borrow::Borrow;
+
+use mpi::datatype::{Partition, PartitionMut};
 use mpi::topology::SystemCommunicator;
 use mpi::traits::{Communicator, Root};
 
@@ -23,6 +26,56 @@ pub fn p_inefficient_sort(comm: &SystemCommunicator, data: &mut [u64]) {
     } else {
         root.gather_into(data);
         root.scatter_into(data);
+    }
+}
+
+/// A very inefficient ranking algorithm that just gathers all data, ranks it locally, and reports
+/// rankings back to the processing units. Input data need not be of equal length
+///
+/// # Parameters
+/// - `comm` mpi communicator
+/// - `data` partial data of this process
+/// - `ranking` output parameter for the ranking
+pub fn p_inefficient_rank(comm: &SystemCommunicator, data: &[u64], ranking: &mut [u64]) {
+    assert_eq!(data.len(), ranking.len());
+
+    let world_size = comm.size() as usize;
+    let rank = comm.rank() as usize;
+    let root_process = comm.process_at_rank(0);
+
+    // collect counts and displs
+    if rank == 0 {
+        let mut counts: Vec<i32> = vec![0; world_size];
+        root_process.gather_into_root(&(data.len() as i32), &mut counts);
+
+        let displs: Vec<i32> = counts
+            .iter()
+            .scan(0, |acc, i| {
+                let tmp = *acc;
+                *acc += *i;
+                Some(tmp)
+            })
+            .collect();
+
+        let mut all_data_vec =
+            vec![0u64; (displs[displs.len() - 1] + counts[counts.len() - 1]) as usize];
+        let mut all_data = PartitionMut::new(&mut all_data_vec, counts.borrow(), displs.borrow());
+
+        root_process.gather_varcount_into_root(data, &mut all_data);
+
+        let mut sorted_data = all_data_vec.iter().cloned().collect::<Vec<_>>();
+        sorted_data.sort_unstable();
+
+        for i in 0..all_data_vec.len() {
+            all_data_vec[i] = sorted_data.partition_point(|x| *x < all_data_vec[i]) as u64;
+        }
+
+        let all_data = Partition::new(&all_data_vec, counts.borrow(), displs.borrow());
+        root_process.scatter_varcount_into_root(&all_data, ranking);
+    } else {
+        root_process.gather_into(&(data.len() as i32));
+        root_process.gather_varcount_into(data);
+        root_process.scatter_varcount_into(ranking);
     }
 }
 
