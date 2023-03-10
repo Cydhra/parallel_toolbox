@@ -53,7 +53,7 @@ fn main() {
     );
 
     // check that selected values are actually the smallest values
-    let local_count = selected_data.len();
+    let local_count = selected_data.len() as i32;
     let mut global_counts = vec![0; world_size];
     world.all_gather_into(&local_count, &mut global_counts);
 
