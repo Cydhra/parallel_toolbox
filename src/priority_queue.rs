@@ -1,5 +1,5 @@
-use crate::p_inefficient_sort;
 use crate::util::select_sample;
+use crate::p_inefficient_rank;
 use mpi::collective::SystemOperation;
 use mpi::topology::SystemCommunicator;
 use mpi::traits::{Communicator, CommunicatorCollectives, Equivalence, Root};
@@ -84,7 +84,16 @@ pub fn p_select_k(comm: &SystemCommunicator, data: &[u64], k: usize) -> Vec<u64>
     let mut global_size = 0;
     comm.all_reduce_into(&data.len(), &mut global_size, SystemOperation::sum());
     if global_size < LOCAL_SORT_THRESHOLD {
-        todo!("do an inefficient ranking and then just return the k smallest elements from their respective lists")
+        let mut ranking = vec![0; data.len()];
+        p_inefficient_rank(comm, data, &mut ranking);
+
+        // todo this will return too many elements if some elements have the same rank
+        return data
+            .iter()
+            .zip(ranking.iter())
+            .filter(|(_, rank)| **rank < k as u64)
+            .map(|(itm, _)| *itm)
+            .collect();
     }
 
     // prepare local buckets and recurse on them
