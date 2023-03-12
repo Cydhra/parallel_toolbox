@@ -1,8 +1,10 @@
+use mpi::collective::SystemOperation;
 use std::borrow::Borrow;
 
 use mpi::datatype::{Partition, PartitionMut};
 use mpi::topology::SystemCommunicator;
-use mpi::traits::{Communicator, Root};
+use mpi::traits::{Communicator, CommunicatorCollectives, Group, Root};
+use mpi::Rank;
 
 /// A very inefficient sorting algorithm that just gathers all data, sorts it locally and
 /// re-distributes it. This is technically worse than theoretical alternatives like
@@ -79,7 +81,9 @@ pub fn p_inefficient_rank(comm: &SystemCommunicator, data: &[u64], ranking: &mut
     }
 }
 
-pub fn p_matrix_sort(comm: &SystemCommunicator, data: &mut [u64]) {
+pub fn p_matrix_rank(comm: &SystemCommunicator, data: &[u64], ranks: &mut [u64]) {
+    assert_eq!(data.len(), ranks.len());
+
     let rank = comm.rank() as usize;
     let world_size = comm.size() as usize;
     let matrix_size = f64::sqrt(world_size as f64) as usize;
@@ -89,15 +93,81 @@ pub fn p_matrix_sort(comm: &SystemCommunicator, data: &mut [u64]) {
         "matrix sort only works if the processor count is a square number"
     );
 
+    // split processors into cubic matrix pattern along rows and columns
     let row = rank / matrix_size;
     let column = rank % matrix_size;
 
-    // todo split comm into groups
+    let row_group = comm
+        .split_by_subgroup_collective(
+            &comm.group().include(
+                &(matrix_size * row..matrix_size * (row + 1))
+                    .into_iter()
+                    .map(|i| i as Rank)
+                    .collect::<Vec<_>>(),
+            ),
+        )
+        .unwrap();
+
+    let column_group = comm
+        .split_by_subgroup_collective(
+            &comm.group().include(
+                &((column..column + world_size - matrix_size + 1)
+                    .step_by(matrix_size)
+                    .into_iter()
+                    .map(|i| i as Rank)
+                    .collect::<Vec<_>>()),
+            ),
+        )
+        .unwrap();
+
+    let mut column_data = vec![0u64; matrix_size * data.len()];
+    let mut row_data = vec![0u64; matrix_size * data.len()];
+    column_group.all_gather_into(data, &mut column_data);
+
+    // broadcast the received data along the row i from the cell (i, i).
+    if row == column {
+        row_data.copy_from_slice(&column_data);
+        row_group.this_process().broadcast_into(&mut row_data);
+    } else {
+        row_group
+            .process_at_rank(row as Rank)
+            .broadcast_into(&mut row_data);
+    }
+
+    // sort column data
+    column_data.sort_unstable();
+
+    // locally calculate ranking
+    let mut row_ranks = Vec::with_capacity(row_data.len());
+    for n in row_data {
+        row_ranks.push(column_data.partition_point(|x| *x < n))
+    }
+
+    // reduce ranking for row i in cell (i, i) and then re-scatter it along the column so all clients receive their
+    // final ranking
+    let mut global_ranks = vec![0u64; row_ranks.len()];
+    if column == row {
+        row_group.this_process().reduce_into_root(
+            &row_ranks,
+            &mut global_ranks,
+            SystemOperation::sum(),
+        );
+        column_group
+            .this_process()
+            .scatter_into_root(&global_ranks, ranks);
+    } else {
+        row_group
+            .process_at_rank(row as Rank)
+            .reduce_into(&row_ranks, SystemOperation::sum());
+        column_group
+            .process_at_rank(column as Rank)
+            .scatter_into(ranks);
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::p_inefficient_sort;
+    use crate::{p_inefficient_sort, p_matrix_rank};
 
     #[test]
     fn test_inefficient_sort() {
@@ -111,6 +181,24 @@ mod tests {
         expected
             .iter()
             .zip(data.iter())
+            .for_each(|(i, j)| assert_eq!(*i, *j));
+    }
+
+    #[test]
+    fn test_matrix_rank() {
+        let data = [1, 2, 3, 4, 5, 6, 7, 8, 9];
+        let mut ranking = vec![0u64; data.len()];
+
+        let universe = mpi::initialize().unwrap();
+        let world = universe.world();
+
+        p_matrix_rank(&world, &data, &mut ranking);
+
+        let expected = [0, 1, 2, 3, 4, 5, 6, 7, 8];
+        assert_eq!(expected.len(), ranking.len());
+        expected
+            .iter()
+            .zip(ranking.iter())
             .for_each(|(i, j)| assert_eq!(*i, *j));
     }
 }
