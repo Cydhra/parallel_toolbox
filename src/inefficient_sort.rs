@@ -7,8 +7,7 @@ use mpi::traits::{Communicator, CommunicatorCollectives, Group, Root};
 use mpi::Rank;
 
 /// A very inefficient sorting algorithm that just gathers all data, sorts it locally and
-/// re-distributes it. This is technically worse than theoretical alternatives like
-/// fast-inefficient-sort (which requires p = n² processors) and matrix-sort (which requires a
+/// re-distributes it. This is technically worse than the theoretical alternative and matrix-sort (which requires a
 /// square number of processors), but this algorithm is applicable regardless of number of processors.
 ///
 /// # Parameters
@@ -32,13 +31,48 @@ pub fn inefficient_sort(comm: &SystemCommunicator, data: &mut [u64]) {
 }
 
 /// A very inefficient ranking algorithm that just gathers all data, ranks it locally, and reports
-/// rankings back to the processing units. Input data need not be of equal length
+/// rankings back to the processing units. Input data length must be equal between all clients.
+/// This algorithm requires less communication than the `inefficient_rank_var` alternative.
+///
+/// # Parameters
+/// - `comm` mpi communicator
+/// - `data` partial data of this process
+/// - `ranking` output parameter for the ranking, must be of equal size as the data slice
+pub fn inefficient_rank(comm: &SystemCommunicator, data: &[u64], ranking: &mut [u64]) {
+    assert_eq!(data.len(), ranking.len());
+
+    let rank = comm.rank() as usize;
+    let world_size = comm.size() as usize;
+    let mut recv_buffer = vec![0u64; data.len() * world_size];
+    let mut rank_buffer = Vec::with_capacity(recv_buffer.len());
+
+    let root = comm.process_at_rank(0);
+
+    if rank == 0 {
+        root.gather_into_root(data, &mut recv_buffer);
+        let mut unsorted_buffer = vec![0u64; recv_buffer.len()];
+        unsorted_buffer.copy_from_slice(&recv_buffer);
+        recv_buffer.sort_unstable();
+
+        for n in unsorted_buffer {
+            rank_buffer.push(recv_buffer.partition_point(|x| *x < n));
+        }
+
+        root.scatter_into_root(&rank_buffer, ranking);
+    } else {
+        root.gather_into(data);
+        root.scatter_into(ranking);
+    }
+}
+
+/// A very inefficient ranking algorithm that just gathers all data, ranks it locally, and reports
+/// rankings back to the processing units. Input data length may vary between clients.
 ///
 /// # Parameters
 /// - `comm` mpi communicator
 /// - `data` partial data of this process
 /// - `ranking` output parameter for the ranking
-pub fn inefficient_rank(comm: &SystemCommunicator, data: &[u64], ranking: &mut [u64]) {
+pub fn inefficient_rank_var(comm: &SystemCommunicator, data: &[u64], ranking: &mut [u64]) {
     assert_eq!(data.len(), ranking.len());
 
     let world_size = comm.size() as usize;

@@ -1,5 +1,5 @@
 use crate::util::select_sample;
-use crate::inefficient_rank;
+use crate::inefficient_rank_var;
 use mpi::collective::SystemOperation;
 use mpi::topology::SystemCommunicator;
 use mpi::traits::{Communicator, CommunicatorCollectives, Equivalence, Root};
@@ -85,7 +85,7 @@ pub fn p_select_k(comm: &SystemCommunicator, data: &[u64], k: usize) -> Vec<u64>
     comm.all_reduce_into(&data.len(), &mut global_size, SystemOperation::sum());
     if global_size < LOCAL_SORT_THRESHOLD {
         let mut ranking = vec![0; data.len()];
-        inefficient_rank(comm, data, &mut ranking);
+        inefficient_rank_var(comm, data, &mut ranking);
 
         // todo this will return too many elements if some elements have the same rank
         return data
