@@ -27,7 +27,6 @@ which are reused in more efficient algorithms as the base case for recursions.
 * `inefficient_rank` sends all data to one processor, which will calculate ranks and return them to the original 
   processors. Otherwise it is the same design as `inefficient_sort`
 * `matrix_rank` requires a square number of processors, but is theoretically more efficient than alternatives
-  
 
 #### Sample Sort
 As an efficient all-purpose sorting algorithm the toolbox provides `sample_sort`.
@@ -36,3 +35,9 @@ and will sort the data according to the MPI processor ranks.
 It guarantees constant amount of recursions with high probability,
 and data distribution will be no worse than $(1 + \epsilon)\frac{n}{p}$ 
 where $n$ is the total data amount, $p$ is the number of processors and $\epsilon$ is a tuning parameter.
+
+#### Selection
+The crate provides a single-threaded (`select_k`) and a parallel (`parallel_select_k`) selection algorithm
+that select the $k$ smallest entries from an unsorted slice.
+Both algorithms are randomized Las Vegas algorithms with Chernoff bounds proving their constant recursion depth.
+Both work with varying input slice lengths.
