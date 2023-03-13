@@ -15,7 +15,7 @@ use mpi::Rank;
 /// - `comm` mpi communicator
 /// - `data` partial data of this process. Must not be very much and must be of equal size on all
 /// processes. The buffer will be overwritten with the sorted data
-pub fn p_inefficient_sort(comm: &SystemCommunicator, data: &mut [u64]) {
+pub fn inefficient_sort(comm: &SystemCommunicator, data: &mut [u64]) {
     let rank = comm.rank() as usize;
     let world_size = comm.size() as usize;
     let mut recv_buffer = vec![0u64; data.len() * world_size];
@@ -38,7 +38,7 @@ pub fn p_inefficient_sort(comm: &SystemCommunicator, data: &mut [u64]) {
 /// - `comm` mpi communicator
 /// - `data` partial data of this process
 /// - `ranking` output parameter for the ranking
-pub fn p_inefficient_rank(comm: &SystemCommunicator, data: &[u64], ranking: &mut [u64]) {
+pub fn inefficient_rank(comm: &SystemCommunicator, data: &[u64], ranking: &mut [u64]) {
     assert_eq!(data.len(), ranking.len());
 
     let world_size = comm.size() as usize;
@@ -81,7 +81,7 @@ pub fn p_inefficient_rank(comm: &SystemCommunicator, data: &[u64], ranking: &mut
     }
 }
 
-pub fn p_matrix_rank(comm: &SystemCommunicator, data: &[u64], ranks: &mut [u64]) {
+pub fn matrix_rank(comm: &SystemCommunicator, data: &[u64], ranks: &mut [u64]) {
     assert_eq!(data.len(), ranks.len());
 
     let rank = comm.rank() as usize;
@@ -167,7 +167,7 @@ pub fn p_matrix_rank(comm: &SystemCommunicator, data: &[u64], ranks: &mut [u64])
 
 #[cfg(test)]
 mod tests {
-    use crate::{p_inefficient_sort, p_matrix_rank};
+    use crate::{inefficient_sort, matrix_rank};
 
     #[test]
     fn test_inefficient_sort() {
@@ -175,7 +175,7 @@ mod tests {
         let universe = mpi::initialize().unwrap();
         let world = universe.world();
 
-        p_inefficient_sort(&world, &mut data);
+        inefficient_sort(&world, &mut data);
         let expected = [1, 2, 4, 4, 6, 7, 23, 23, 23, 36, 234, 234, 234, 1362u64];
         assert_eq!(expected.len(), data.len());
         expected
@@ -192,7 +192,7 @@ mod tests {
         let universe = mpi::initialize().unwrap();
         let world = universe.world();
 
-        p_matrix_rank(&world, &data, &mut ranking);
+        matrix_rank(&world, &data, &mut ranking);
 
         let expected = [0, 1, 2, 3, 4, 5, 6, 7, 8];
         assert_eq!(expected.len(), ranking.len());

@@ -19,7 +19,7 @@ const INEFFICIENT_SORT_THRESHOLD: usize = 512;
 /// - `total_data` total amount of data distributed over all processors. This value need not be
 /// exact, however underestimating will lead to a worse distribution of data across processors, and
 /// overestimating will slow down the algorithm.
-pub fn p_sample_sort(comm: &SystemCommunicator, data: &mut [u64], total_data: usize) -> Vec<u64> {
+pub fn sample_sort(comm: &SystemCommunicator, data: &mut [u64], total_data: usize) -> Vec<u64> {
     let processes = comm.size() as usize;
     let data_per_client: f32 = total_data as f32 / processes as f32;
     let sample_size = (16f32 * data_per_client.ln()) as usize;
@@ -113,7 +113,7 @@ fn select_pivots(comm: &SystemCommunicator, data: &mut [u64], out: &mut [u64]) {
         root.broadcast_into(out);
     } else {
         // sort sample, select pivots on each processor, gossip them
-        let sorted_sample = p_sample_sort(comm, data, sample_len * proc_count);
+        let sorted_sample = sample_sort(comm, data, sample_len * proc_count);
         let local_pivot = sorted_sample[sorted_sample.len() - 1];
         comm.all_gather_into(&local_pivot, out);
     }
@@ -121,7 +121,7 @@ fn select_pivots(comm: &SystemCommunicator, data: &mut [u64], out: &mut [u64]) {
 
 #[cfg(test)]
 mod tests {
-    use crate::p_sample_sort;
+    use crate::sample_sort;
 
     #[test]
     fn test_sample_sort() {
@@ -130,7 +130,7 @@ mod tests {
         let universe = mpi::initialize().unwrap();
         let world = universe.world();
         let mut data = [6, 30, 574, 16, 2342, 53, 5, 4935, 3, 4];
-        let result = p_sample_sort(&world, &mut data, 10);
+        let result = sample_sort(&world, &mut data, 10);
         let expected = [3, 4, 5, 6, 16, 30, 53, 574, 2342, 4935];
 
         assert_eq!(expected.len(), result.len(), "Result has wrong size");
