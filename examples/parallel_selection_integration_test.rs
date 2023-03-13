@@ -7,7 +7,7 @@ use std::env;
 use std::process::exit;
 use std::time::Instant;
 
-use parallel_toolbox::p_select_k;
+use parallel_toolbox::parallel_select_k;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -42,7 +42,7 @@ fn main() {
 
     // call sorting algorithm
     let start = Instant::now();
-    let selected_data = p_select_k(&world, &data, world_size);
+    let selected_data = parallel_select_k(&world, &data, world_size);
 
     println!(
         "process {} chose {} of {} qwords in {} ms",

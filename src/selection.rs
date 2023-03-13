@@ -1,5 +1,5 @@
-use crate::util::select_sample;
 use crate::inefficient_rank_var;
+use crate::util::select_sample;
 use mpi::collective::SystemOperation;
 use mpi::topology::SystemCommunicator;
 use mpi::traits::{Communicator, CommunicatorCollectives, Equivalence, Root};
@@ -10,13 +10,12 @@ const LOCAL_SORT_THRESHOLD: usize = 512;
 /// Las-Vegas-algorithm to select the k smallest elements in a distributed set. Chernoff bound guarantees
 /// constant number of recursions with high probability. Algorithm by Blum et al. 1972.
 /// Guarantees that all data is still present in input array, but may be sorted.
+/// Returns those values that were present on this processor already, so the algorithm only returns data in a
+/// balanced distribution, if it was balanced before calling this method.
 ///
 /// # Parameters
 /// - `data` a mutable slice of data. May be sorted in-place, hence the mutability
 /// - `k` amount of elements to select from `data`. Must not be greater than length of `data`.
-///
-/// # Returns
-/// A vector of the k smallest elements of the input data slice. Not sorted.
 pub fn select_k(data: &mut [u64], k: usize) -> Vec<u64> {
     assert!(data.len() >= k, "cannot select more elements than present");
 
@@ -75,8 +74,15 @@ pub fn select_k(data: &mut [u64], k: usize) -> Vec<u64> {
 
 /// Parallel adaption of Blum et al.'s Las-Vegas-algorithm to select the k smallest elements in a
 /// distributed set. Chernoff bound guarantees constant number of recursions with high probability.
-/// Input data must not be an empty slice.
-pub fn p_select_k(comm: &SystemCommunicator, data: &[u64], k: usize) -> Vec<u64> {
+/// Returns those values that were present on this processor already, so the algorithm only returns data in a
+/// balanced distribution, if it was balanced before calling this method.
+///
+/// # Parameters
+/// - `comm` mpi communicator
+/// - `data` input data slice. Need not be of equal size between clients and may be empty. An empty slice will
+/// participate in the algorithm with pseudo values, so empty slices will not reduce the runtime.
+/// - `k` how many elements to select. TODO: what happens if k > |total_size|?
+pub fn parallel_select_k(comm: &SystemCommunicator, data: &[u64], k: usize) -> Vec<u64> {
     let sample_size = 8; // tuning parameter
     let delta = 2; // tuning parameter
 
@@ -140,18 +146,18 @@ pub fn p_select_k(comm: &SystemCommunicator, data: &[u64], k: usize) -> Vec<u64>
     );
 
     if low_bucket_size > k {
-        p_select_k(comm, &mut lower_bucket, k)
+        parallel_select_k(comm, &mut lower_bucket, k)
     } else {
         if low_bucket_size + mid_bucket_size < k {
             lower_bucket.append(&mut middle_bucket);
-            lower_bucket.append(&mut p_select_k(
+            lower_bucket.append(&mut parallel_select_k(
                 comm,
                 &mut upper_bucket,
                 k - low_bucket_size - mid_bucket_size,
             ));
             lower_bucket
         } else {
-            lower_bucket.append(&mut p_select_k(
+            lower_bucket.append(&mut parallel_select_k(
                 comm,
                 &mut middle_bucket,
                 k - low_bucket_size,
@@ -219,7 +225,7 @@ fn local_pivot_search(
 mod tests {
     use super::select_k;
     use super::LOCAL_SORT_THRESHOLD;
-    use crate::p_select_k;
+    use crate::parallel_select_k;
     use rand::distributions::Uniform;
     use rand::{thread_rng, Rng};
 
@@ -257,16 +263,16 @@ mod tests {
         let universe = mpi::initialize().unwrap();
         let world = universe.world();
 
-        let select_single = p_select_k(&world, &[1], 1);
+        let select_single = parallel_select_k(&world, &[1], 1);
         assert_eq!(1, select_single.len());
         assert_eq!(1, select_single[0]);
 
-        let select_multiple = p_select_k(&world, &[1, 10, 3, 5, 6, 1, 2], 2);
+        let select_multiple = parallel_select_k(&world, &[1, 10, 3, 5, 6, 1, 2], 2);
         assert_eq!(2, select_multiple.len());
         assert_eq!(1, select_multiple[0]);
         assert_eq!(1, select_multiple[1]);
 
-        let select_none = p_select_k(&world, &[], 0);
+        let select_none = parallel_select_k(&world, &[], 0);
         assert_eq!(0, select_none.len());
 
         let mut rng = thread_rng();
@@ -278,7 +284,7 @@ mod tests {
         data.push(1);
         data.push(2);
         data.push(3);
-        let smallest = p_select_k(&world, &data, 3);
+        let smallest = parallel_select_k(&world, &data, 3);
         assert_eq!(3, smallest.len());
         assert!(smallest.contains(&1) && smallest.contains(&2) && smallest.contains(&3))
     }
