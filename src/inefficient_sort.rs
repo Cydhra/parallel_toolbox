@@ -115,6 +115,15 @@ pub fn inefficient_rank_var(comm: &SystemCommunicator, data: &[u64], ranking: &m
     }
 }
 
+/// Ranking algorithm that arranges processors in a matrix and ranks a subset of data per row. In the end, all ranks
+/// are scattered to the input processors. All input slices must be of equal size for this algorithm to work.
+/// If processors are not a square number, it will lead to undefined behavior and most likely result in memory
+/// corruption.
+///
+/// # Parameters
+/// - `comm` mpi communicator
+/// - `data` small data slice, same length on all clients
+/// - `ranks` output slice for rank data, same length as `data` slice.
 pub fn matrix_rank(comm: &SystemCommunicator, data: &[u64], ranks: &mut [u64]) {
     assert_eq!(data.len(), ranks.len());
 

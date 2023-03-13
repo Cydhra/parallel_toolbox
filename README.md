@@ -22,9 +22,12 @@ or by confusing data types.
 #### Inefficient Ranking and Sorting
 A few inefficient routines for ranking and sorting are provided,
 which are reused in more efficient algorithms as the base case for recursions.
-* `matrix_sort` requires a square number of processors, but is theoretically more efficient than alternatives
-* `inefficient_sort` sends all data to one processor, which will sort and redistribute it. It is the most 
+* `inefficient_sort` sends all data to one processor, which will sort and redistribute it. It is the most
   inefficient and slowest algorithm, but works in all cases
+* `inefficient_rank` sends all data to one processor, which will calculate ranks and return them to the original 
+  processors. Otherwise it is the same design as `inefficient_sort`
+* `matrix_rank` requires a square number of processors, but is theoretically more efficient than alternatives
+  
 
 #### Sample Sort
 As an efficient all-purpose sorting algorithm the toolbox provides `sample_sort`.
