@@ -1,10 +1,14 @@
+use crate::parallel_select_k;
+use mpi::collective::SystemOperation;
 use mpi::datatype::{Partition, PartitionMut};
+use mpi::ffi::RSMPI_SUM;
 use mpi::topology::SystemCommunicator;
 use mpi::traits::{Communicator, CommunicatorCollectives};
 use rand::rngs::ThreadRng;
 use rand::{thread_rng, Rng};
+use std::arch::asm;
 use std::borrow::Borrow;
-use std::cmp::Reverse;
+use std::cmp::{min, Reverse};
 use std::collections::BinaryHeap;
 
 pub struct ParallelPriorityQueue<'a> {
@@ -29,6 +33,9 @@ impl<'a> ParallelPriorityQueue<'a> {
 
     /// Insert a constant amount of elements per processing unit. Insertion will redistribute the items among
     /// processors to ensure uniform data distribution
+    ///
+    /// # Parameters
+    /// - `elements` a small number of elements to insert. They will be redistributed among processors
     pub fn insert(&mut self, elements: &[u64]) {
         let world_size = self.communicator.size() as usize;
         let elements = elements.to_vec();
@@ -83,6 +90,51 @@ impl<'a> ParallelPriorityQueue<'a> {
 
     /// Delete the p smallest elements in the priority queue and distribute them among all p processing units.
     pub fn delete_min(&mut self) -> u64 {
-        todo!("not yet implemented")
+        let world_size = self.communicator.size() as usize;
+        let rt_world_size = (world_size as f64).sqrt() as usize;
+
+        let mut pool_buffer = vec![0u64; min(rt_world_size, self.bin_heap.len())];
+
+        // delete the sqrt(p) smallest elements and store them in the selection pool
+        // TODO this should probably use an oversampling factor
+        for i in 0..pool_buffer.len() {
+            pool_buffer[i] = self.bin_heap.pop().unwrap().0;
+        }
+
+        // perform select_k on the selection pool and distribute the result among all p processing units
+        let smallest_elements = parallel_select_k(self.communicator, &pool_buffer, world_size);
+        // TODO fill remaining elements back into the queue, but watch out for duplicates
+
+        // enumerate the smallest element using a prefix sum and distribute the elements among the processors accordingly
+        let mut prefix_sum = 0usize;
+        self.communicator.scan_into(
+            &smallest_elements.len(),
+            &mut prefix_sum,
+            SystemOperation::sum(),
+        );
+
+        let mut send_counts = vec![0; world_size];
+        let mut send_displs = vec![0; world_size];
+
+        for i in prefix_sum - smallest_elements.len()..prefix_sum {
+            send_counts[i] = 1;
+        }
+
+        for i in 0..world_size - 1 {
+            send_displs[i + 1] = send_displs[i] + send_counts[i];
+        }
+
+        let send_partition = Partition::new(
+            &smallest_elements,
+            send_counts.borrow(),
+            send_displs.borrow(),
+        );
+        let mut recv_buffer: u64 = 0;
+        let mut recv_partition = PartitionMut::new(&mut recv_buffer, [1].borrow(), [0].borrow());
+
+        self.communicator
+            .all_to_all_varcount_into(&send_partition, &mut recv_partition);
+
+        recv_buffer
     }
 }
