@@ -1,12 +1,10 @@
 use crate::parallel_select_k;
 use mpi::collective::SystemOperation;
 use mpi::datatype::{Partition, PartitionMut};
-use mpi::ffi::RSMPI_SUM;
 use mpi::topology::SystemCommunicator;
 use mpi::traits::{Communicator, CommunicatorCollectives};
 use rand::rngs::ThreadRng;
 use rand::{thread_rng, Rng};
-use std::arch::asm;
 use std::borrow::Borrow;
 use std::cmp::{min, Reverse};
 use std::collections::BinaryHeap;
@@ -97,8 +95,8 @@ impl<'a> ParallelPriorityQueue<'a> {
 
         // delete the sqrt(p) smallest elements and store them in the selection pool
         // TODO this should probably use an oversampling factor
-        for i in 0..pool_buffer.len() {
-            pool_buffer[i] = self.bin_heap.pop().unwrap().0;
+        for item in &mut pool_buffer {
+            *item = self.bin_heap.pop().unwrap().0;
         }
 
         // perform select_k on the selection pool and distribute the result among all p processing units
@@ -136,5 +134,67 @@ impl<'a> ParallelPriorityQueue<'a> {
             .all_to_all_varcount_into(&send_partition, &mut recv_partition);
 
         recv_buffer
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    ///! These tests are sanity checks for the parallel priority queue implementation. They do not
+    ///! check for the correctness of the parallel implementation, but rather for the correctness of
+    ///! the local implementation.
+
+    use super::*;
+
+    #[test]
+    fn test_insert() {
+        let universe = mpi::initialize().unwrap();
+        let world = universe.world();
+
+        let mut pq = ParallelPriorityQueue::new(&world);
+
+        let mut elements = vec![0u64; 10];
+        elements.fill_with(|| rand::random());
+        pq.insert(&elements);
+        assert_eq!(
+            pq.bin_heap.len(),
+            elements.len(),
+            "wrong amount inserted into the queue"
+        );
+
+        // check that all elements have been inserted correctly
+        elements.sort();
+        elements.iter().for_each(|e| {
+            assert_eq!(
+                *e,
+                pq.bin_heap.pop().unwrap().0,
+                "unexpected element inserted into the queue"
+            )
+        });
+    }
+
+    #[test]
+    fn test_delete_min() {
+        let universe = mpi::initialize().unwrap();
+        let world = universe.world();
+
+        let mut pq = ParallelPriorityQueue::new(&world);
+
+        let mut elements = vec![0u64; 10];
+        elements.fill_with(|| rand::random());
+
+        pq.insert(&elements);
+
+        let min = pq.delete_min();
+        elements.sort();
+
+        assert_eq!(
+            min, elements[0],
+            "deleteMin did not return the smallest element"
+        );
+        assert_eq!(
+            pq.bin_heap.len(),
+            elements.len() - 1,
+            "deleteMin deleted too many elements"
+        );
     }
 }
