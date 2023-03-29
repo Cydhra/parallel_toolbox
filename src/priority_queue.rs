@@ -50,9 +50,10 @@ impl<'a> ParallelPriorityQueue<'a> {
 
         for (_, i) in buf.iter() {
             send_counts[*i] += 1;
-            if *i < world_size - 1 {
-                send_displs[*i + 1] += 1;
-            }
+        }
+
+        for i in 0..world_size - 1 {
+            send_displs[i + 1] = send_displs[i] + send_counts[i];
         }
 
         let mut recv_counts: Vec<i32> = vec![0; world_size];
