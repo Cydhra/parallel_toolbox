@@ -1,22 +1,21 @@
 use crate::parallel_select_k;
 use mpi::collective::SystemOperation;
 use mpi::datatype::{Partition, PartitionMut};
-use mpi::topology::SystemCommunicator;
-use mpi::traits::{Communicator, CommunicatorCollectives};
 use rand::rngs::ThreadRng;
 use rand::{thread_rng, Rng};
 use std::borrow::Borrow;
 use std::cmp::{min, Reverse};
 use std::collections::BinaryHeap;
+use mpi::traits::*;
 
 pub struct ParallelPriorityQueue<'a> {
-    communicator: &'a SystemCommunicator,
+    communicator: &'a dyn Communicator,
     bin_heap: BinaryHeap<Reverse<u64>>,
     rng: ThreadRng,
 }
 
 impl<'a> ParallelPriorityQueue<'a> {
-    pub fn new(comm: &'a SystemCommunicator) -> ParallelPriorityQueue<'a> {
+    pub fn new(comm: &'a dyn Communicator) -> ParallelPriorityQueue<'a> {
         ParallelPriorityQueue {
             communicator: comm,
             bin_heap: BinaryHeap::new(),

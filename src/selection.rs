@@ -1,7 +1,6 @@
 use crate::inefficient_rank_var;
 use crate::util::select_sample;
 use mpi::collective::SystemOperation;
-use mpi::topology::SystemCommunicator;
 use mpi::traits::{Communicator, CommunicatorCollectives, Equivalence, Root};
 use std::cmp::{max, min};
 
@@ -82,7 +81,7 @@ pub fn select_k(data: &mut [u64], k: usize) -> Vec<u64> {
 /// - `data` input data slice. Need not be of equal size between clients and may be empty. An empty slice will
 /// participate in the algorithm with pseudo values, so empty slices will not reduce the runtime.
 /// - `k` how many elements to select. TODO: what happens if k > |total_size|?
-pub fn parallel_select_k(comm: &SystemCommunicator, data: &[u64], k: usize) -> Vec<u64> {
+pub fn parallel_select_k(comm: &dyn Communicator, data: &[u64], k: usize) -> Vec<u64> {
     let sample_size = 8; // tuning parameter
     let delta = 2; // tuning parameter
 
@@ -175,7 +174,7 @@ pub fn parallel_select_k(comm: &SystemCommunicator, data: &[u64], k: usize) -> V
 /// - `bound` the estimated k-bound in the sample
 /// - `delta` the delta value added and subtracted from the estimated bound to gauge the location of the k boundary
 fn local_pivot_search(
-    comm: &SystemCommunicator,
+    comm: &dyn Communicator,
     sample: &[u64],
     bound: usize,
     delta: usize,

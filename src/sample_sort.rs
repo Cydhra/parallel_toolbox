@@ -1,7 +1,6 @@
 use std::borrow::Borrow;
 
 use mpi::datatype::{Partition, PartitionMut};
-use mpi::topology::SystemCommunicator;
 use mpi::traits::{Communicator, CommunicatorCollectives, Root};
 
 use crate::util::select_sample;
@@ -19,7 +18,7 @@ const INEFFICIENT_SORT_THRESHOLD: usize = 512;
 /// - `total_data` total amount of data distributed over all processors. This value need not be
 /// exact, however underestimating will lead to a worse distribution of data across processors, and
 /// overestimating will slow down the algorithm.
-pub fn sample_sort(comm: &SystemCommunicator, data: &mut [u64], total_data: usize) -> Vec<u64> {
+pub fn sample_sort(comm: &dyn Communicator, data: &mut [u64], total_data: usize) -> Vec<u64> {
     let processes = comm.size() as usize;
     let data_per_client: f32 = total_data as f32 / processes as f32;
     let sample_size = (16f32 * data_per_client.ln()) as usize;
@@ -83,7 +82,7 @@ pub fn sample_sort(comm: &SystemCommunicator, data: &mut [u64], total_data: usiz
 /// - `data` data sample from which to select pivots
 /// - `out` output buffer to store the pivots in. This must be a slice of length exactly equal to
 /// the communicator's size minus one.
-fn select_pivots(comm: &SystemCommunicator, data: &mut [u64], out: &mut [u64]) {
+fn select_pivots(comm: &dyn Communicator, data: &mut [u64], out: &mut [u64]) {
     let sample_len = data.len();
     let proc_count = comm.size() as usize;
 

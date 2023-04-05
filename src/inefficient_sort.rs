@@ -2,9 +2,8 @@ use mpi::collective::SystemOperation;
 use std::borrow::Borrow;
 
 use mpi::datatype::{Partition, PartitionMut};
-use mpi::topology::SystemCommunicator;
-use mpi::traits::{Communicator, CommunicatorCollectives, Group, Root};
 use mpi::Rank;
+use mpi::traits::*;
 
 /// A very inefficient sorting algorithm that just gathers all data, sorts it locally and
 /// re-distributes it. This is technically worse than the theoretical alternative and matrix-sort (which requires a
@@ -14,7 +13,7 @@ use mpi::Rank;
 /// - `comm` mpi communicator
 /// - `data` partial data of this process. Must not be very much and must be of equal size on all
 /// processes. The buffer will be overwritten with the sorted data
-pub fn inefficient_sort(comm: &SystemCommunicator, data: &mut [u64]) {
+pub fn inefficient_sort(comm: &dyn Communicator, data: &mut [u64]) {
     let rank = comm.rank() as usize;
     let world_size = comm.size() as usize;
     let mut recv_buffer = vec![0u64; data.len() * world_size];
@@ -38,7 +37,7 @@ pub fn inefficient_sort(comm: &SystemCommunicator, data: &mut [u64]) {
 /// - `comm` mpi communicator
 /// - `data` partial data of this process
 /// - `ranking` output parameter for the ranking, must be of equal size as the data slice
-pub fn inefficient_rank(comm: &SystemCommunicator, data: &[u64], ranking: &mut [u64]) {
+pub fn inefficient_rank(comm: &dyn Communicator, data: &[u64], ranking: &mut [u64]) {
     assert_eq!(data.len(), ranking.len());
 
     let rank = comm.rank() as usize;
@@ -72,7 +71,7 @@ pub fn inefficient_rank(comm: &SystemCommunicator, data: &[u64], ranking: &mut [
 /// - `comm` mpi communicator
 /// - `data` partial data of this process
 /// - `ranking` output parameter for the ranking
-pub fn inefficient_rank_var(comm: &SystemCommunicator, data: &[u64], ranking: &mut [u64]) {
+pub fn inefficient_rank_var(comm: &dyn Communicator, data: &[u64], ranking: &mut [u64]) {
     assert_eq!(data.len(), ranking.len());
 
     let world_size = comm.size() as usize;
@@ -124,7 +123,7 @@ pub fn inefficient_rank_var(comm: &SystemCommunicator, data: &[u64], ranking: &m
 /// - `comm` mpi communicator
 /// - `data` small data slice, same length on all clients
 /// - `ranks` output slice for rank data, same length as `data` slice.
-pub fn matrix_rank(comm: &SystemCommunicator, data: &[u64], ranks: &mut [u64]) {
+pub fn matrix_rank(comm: &dyn Communicator, data: &[u64], ranks: &mut [u64]) {
     assert_eq!(data.len(), ranks.len());
 
     let rank = comm.rank() as usize;
