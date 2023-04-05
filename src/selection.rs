@@ -227,64 +227,69 @@ mod tests {
     use crate::parallel_select_k;
     use rand::distributions::Uniform;
     use rand::{thread_rng, Rng};
+    use rusty_fork::rusty_fork_test;
 
-    #[test]
-    fn test_select_k() {
-        let select_single = select_k(&mut [1], 1);
-        assert_eq!(1, select_single.len());
-        assert_eq!(1, select_single[0]);
+    rusty_fork_test! {
+        #[test]
+        fn test_select_k() {
+            let select_single = select_k(&mut [1], 1);
+            assert_eq!(1, select_single.len());
+            assert_eq!(1, select_single[0]);
 
-        let select_multiple = select_k(&mut [1, 10, 3, 5, 6, 1, 2], 2);
-        assert_eq!(2, select_multiple.len());
-        assert_eq!(1, select_multiple[0]);
-        assert_eq!(1, select_multiple[1]);
+            let select_multiple = select_k(&mut [1, 10, 3, 5, 6, 1, 2], 2);
+            assert_eq!(2, select_multiple.len());
+            assert_eq!(1, select_multiple[0]);
+            assert_eq!(1, select_multiple[1]);
 
-        let select_none = select_k(&mut [], 0);
-        assert_eq!(0, select_none.len());
+            let select_none = select_k(&mut [], 0);
+            assert_eq!(0, select_none.len());
 
-        let mut rng = thread_rng();
-        let uniform = Uniform::from(10..100);
-        let mut data = Vec::with_capacity(2 * LOCAL_SORT_THRESHOLD);
-        for _ in 0..2 * LOCAL_SORT_THRESHOLD {
-            data.push(rng.sample(&uniform));
+            let mut rng = thread_rng();
+            let uniform = Uniform::from(10..100);
+            let mut data = Vec::with_capacity(2 * LOCAL_SORT_THRESHOLD);
+            for _ in 0..2 * LOCAL_SORT_THRESHOLD {
+                data.push(rng.sample(&uniform));
+            }
+            data.push(1);
+            data.push(2);
+            data.push(3);
+            let smallest = select_k(&mut data, 3);
+            assert_eq!(3, smallest.len());
+            assert!(smallest.contains(&1) && smallest.contains(&2) && smallest.contains(&3))
         }
-        data.push(1);
-        data.push(2);
-        data.push(3);
-        let smallest = select_k(&mut data, 3);
-        assert_eq!(3, smallest.len());
-        assert!(smallest.contains(&1) && smallest.contains(&2) && smallest.contains(&3))
     }
 
-    /// These are some sanity checks. Since only one process is used, the parallel features aren't tested
-    #[test]
-    fn test_p_select_k() {
-        let universe = mpi::initialize().unwrap();
-        let world = universe.world();
+    rusty_fork_test! {
+        /// These are some sanity checks. Since only one process is used, the parallel features aren't tested
+        #[test]
+        fn test_p_select_k() {
+            let universe = mpi::initialize().unwrap();
+            let world = universe.world();
 
-        let select_single = parallel_select_k(&world, &[1], 1);
-        assert_eq!(1, select_single.len());
-        assert_eq!(1, select_single[0]);
+            let select_single = parallel_select_k(&world, &[1], 1);
+            assert_eq!(1, select_single.len());
+            assert_eq!(1, select_single[0]);
 
-        let select_multiple = parallel_select_k(&world, &[1, 10, 3, 5, 6, 1, 2], 2);
-        assert_eq!(2, select_multiple.len());
-        assert_eq!(1, select_multiple[0]);
-        assert_eq!(1, select_multiple[1]);
+            let select_multiple = parallel_select_k(&world, &[1, 10, 3, 5, 6, 1, 2], 2);
+            assert_eq!(2, select_multiple.len());
+            assert_eq!(1, select_multiple[0]);
+            assert_eq!(1, select_multiple[1]);
 
-        let select_none = parallel_select_k(&world, &[], 0);
-        assert_eq!(0, select_none.len());
+            let select_none = parallel_select_k(&world, &[], 0);
+            assert_eq!(0, select_none.len());
 
-        let mut rng = thread_rng();
-        let uniform = Uniform::from(10..100);
-        let mut data = Vec::with_capacity(2 * LOCAL_SORT_THRESHOLD);
-        for _ in 0..2 * LOCAL_SORT_THRESHOLD {
-            data.push(rng.sample(&uniform));
+            let mut rng = thread_rng();
+            let uniform = Uniform::from(10..100);
+            let mut data = Vec::with_capacity(2 * LOCAL_SORT_THRESHOLD);
+            for _ in 0..2 * LOCAL_SORT_THRESHOLD {
+                data.push(rng.sample(&uniform));
+            }
+            data.push(1);
+            data.push(2);
+            data.push(3);
+            let smallest = parallel_select_k(&world, &data, 3);
+            assert_eq!(3, smallest.len());
+            assert!(smallest.contains(&1) && smallest.contains(&2) && smallest.contains(&3))
         }
-        data.push(1);
-        data.push(2);
-        data.push(3);
-        let smallest = parallel_select_k(&world, &data, 3);
-        assert_eq!(3, smallest.len());
-        assert!(smallest.contains(&1) && smallest.contains(&2) && smallest.contains(&3))
     }
 }

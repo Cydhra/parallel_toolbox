@@ -209,38 +209,43 @@ pub fn matrix_rank(comm: &dyn Communicator, data: &[u64], ranks: &mut [u64]) {
 
 #[cfg(test)]
 mod tests {
+    use rusty_fork::rusty_fork_test;
     use crate::{inefficient_sort, matrix_rank};
 
-    #[test]
-    fn test_inefficient_sort() {
-        let mut data = [234, 23, 4, 234, 23, 4, 234, 23, 2, 1362, 6, 1, 36, 7];
-        let universe = mpi::initialize().unwrap();
-        let world = universe.world();
+    rusty_fork_test! {
+        #[test]
+        fn test_inefficient_sort() {
+            let mut data = [234, 23, 4, 234, 23, 4, 234, 23, 2, 1362, 6, 1, 36, 7];
+            let universe = mpi::initialize().unwrap();
+            let world = universe.world();
 
-        inefficient_sort(&world, &mut data);
-        let expected = [1, 2, 4, 4, 6, 7, 23, 23, 23, 36, 234, 234, 234, 1362u64];
-        assert_eq!(expected.len(), data.len());
-        expected
-            .iter()
-            .zip(data.iter())
-            .for_each(|(i, j)| assert_eq!(*i, *j));
+            inefficient_sort(&world, &mut data);
+            let expected = [1, 2, 4, 4, 6, 7, 23, 23, 23, 36, 234, 234, 234, 1362u64];
+            assert_eq!(expected.len(), data.len());
+            expected
+                .iter()
+                .zip(data.iter())
+                .for_each(|(i, j)| assert_eq!(*i, *j));
+        }
     }
 
-    #[test]
-    fn test_matrix_rank() {
-        let data = [1, 2, 3, 4, 5, 6, 7, 8, 9];
-        let mut ranking = vec![0u64; data.len()];
+    rusty_fork_test! {
+        #[test]
+        fn test_matrix_rank() {
+            let data = [1, 2, 3, 4, 5, 6, 7, 8, 9];
+            let mut ranking = vec![0u64; data.len()];
 
-        let universe = mpi::initialize().unwrap();
-        let world = universe.world();
+            let universe = mpi::initialize().unwrap();
+            let world = universe.world();
 
-        matrix_rank(&world, &data, &mut ranking);
+            matrix_rank(&world, &data, &mut ranking);
 
-        let expected = [0, 1, 2, 3, 4, 5, 6, 7, 8];
-        assert_eq!(expected.len(), ranking.len());
-        expected
-            .iter()
-            .zip(ranking.iter())
-            .for_each(|(i, j)| assert_eq!(*i, *j));
+            let expected = [0, 1, 2, 3, 4, 5, 6, 7, 8];
+            assert_eq!(expected.len(), ranking.len());
+            expected
+                .iter()
+                .zip(ranking.iter())
+                .for_each(|(i, j)| assert_eq!(*i, *j));
+        }
     }
 }

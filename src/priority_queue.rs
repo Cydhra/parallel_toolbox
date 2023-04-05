@@ -132,68 +132,74 @@ impl<'a> ParallelPriorityQueue<'a> {
         self.communicator
             .all_to_all_varcount_into(&send_partition, &mut recv_partition);
 
+        // todo expensive edge case handling if the received element is not the smallest local element
         recv_buffer
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use rusty_fork::rusty_fork_test;
     ///! These tests are sanity checks for the parallel priority queue implementation. They do not
     ///! check for the correctness of the parallel implementation, but rather for the correctness of
     ///! the local implementation.
 
     use super::*;
 
-    #[test]
-    fn test_insert() {
-        let universe = mpi::initialize().unwrap();
-        let world = universe.world();
+    rusty_fork_test! {
+        #[test]
+        fn test_insert() {
+            let universe = mpi::initialize().unwrap();
+            let world = universe.world();
 
-        let mut pq = ParallelPriorityQueue::new(&world);
+            let mut pq = ParallelPriorityQueue::new(&world);
 
-        let mut elements = vec![0u64; 10];
-        elements.fill_with(|| rand::random());
-        pq.insert(&elements);
-        assert_eq!(
-            pq.bin_heap.len(),
-            elements.len(),
-            "wrong amount inserted into the queue"
-        );
-
-        // check that all elements have been inserted correctly
-        elements.sort();
-        elements.iter().for_each(|e| {
+            let mut elements = vec![0u64; 10];
+            elements.fill_with(|| rand::random());
+            pq.insert(&elements);
             assert_eq!(
-                *e,
-                pq.bin_heap.pop().unwrap().0,
-                "unexpected element inserted into the queue"
-            )
-        });
+                pq.bin_heap.len(),
+                elements.len(),
+                "wrong amount inserted into the queue"
+            );
+
+            // check that all elements have been inserted correctly
+            elements.sort();
+            elements.iter().for_each(|e| {
+                assert_eq!(
+                    *e,
+                    pq.bin_heap.pop().unwrap().0,
+                    "unexpected element inserted into the queue"
+                )
+            });
+        }
     }
 
-    #[test]
-    fn test_delete_min() {
-        let universe = mpi::initialize().unwrap();
-        let world = universe.world();
+    rusty_fork_test! {
+        #[test]
+        fn test_delete_min() {
+            let universe = mpi::initialize().unwrap();
+            let world = universe.world();
 
-        let mut pq = ParallelPriorityQueue::new(&world);
+            let mut pq = ParallelPriorityQueue::new(&world);
 
-        let mut elements = vec![0u64; 10];
-        elements.fill_with(|| rand::random());
+            let mut elements = vec![0u64; 10];
+            elements.fill_with(|| rand::random());
 
-        pq.insert(&elements);
+            pq.insert(&elements);
 
-        let min = pq.delete_min();
-        elements.sort();
+            let min = pq.delete_min();
+            elements.sort();
 
-        assert_eq!(
-            min, elements[0],
-            "deleteMin did not return the smallest element"
-        );
-        assert_eq!(
-            pq.bin_heap.len(),
-            elements.len() - 1,
-            "deleteMin deleted too many elements"
-        );
+            assert_eq!(
+                min, elements[0],
+                "deleteMin did not return the smallest element"
+            );
+            assert_eq!(
+                pq.bin_heap.len(),
+                elements.len() - 1,
+                "deleteMin deleted too many elements"
+            );
+        }
     }
 }

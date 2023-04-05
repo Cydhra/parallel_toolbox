@@ -120,22 +120,25 @@ fn select_pivots(comm: &dyn Communicator, data: &mut [u64], out: &mut [u64]) {
 
 #[cfg(test)]
 mod tests {
+    use rusty_fork::rusty_fork_test;
     use crate::sample_sort;
 
-    #[test]
-    fn test_sample_sort() {
-        // this is just a sanity check. Since only one client is participating, the actual algorithm isn't tested
+    rusty_fork_test! {
+        #[test]
+        fn test_sample_sort() {
+            // this is just a sanity check. Since only one client is participating, the actual algorithm isn't tested
 
-        let universe = mpi::initialize().unwrap();
-        let world = universe.world();
-        let mut data = [6, 30, 574, 16, 2342, 53, 5, 4935, 3, 4];
-        let result = sample_sort(&world, &mut data, 10);
-        let expected = [3, 4, 5, 6, 16, 30, 53, 574, 2342, 4935];
+            let universe = mpi::initialize().unwrap();
+            let world = universe.world();
+            let mut data = [6, 30, 574, 16, 2342, 53, 5, 4935, 3, 4];
+            let result = sample_sort(&world, &mut data, 10);
+            let expected = [3, 4, 5, 6, 16, 30, 53, 574, 2342, 4935];
 
-        assert_eq!(expected.len(), result.len(), "Result has wrong size");
-        assert!(
-            expected.iter().zip(result.iter()).all(|(a, b)| a == b),
-            "Result does not match expected array"
-        );
+            assert_eq!(expected.len(), result.len(), "Result has wrong size");
+            assert!(
+                expected.iter().zip(result.iter()).all(|(a, b)| a == b),
+                "Result does not match expected array"
+            );
+        }
     }
 }
