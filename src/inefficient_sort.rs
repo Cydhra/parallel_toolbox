@@ -6,8 +6,10 @@ use mpi::Rank;
 use mpi::traits::*;
 
 /// A very inefficient sorting algorithm that just gathers all data, sorts it locally and
-/// re-distributes it. This is technically worse than the theoretical alternative and matrix-sort (which requires a
-/// square number of processors), but this algorithm is applicable regardless of number of processors.
+/// re-distributes it. This is technically worse than the theoretical alternative and matrix-sort
+/// (which requires two integers that divide the processor count),
+/// but this algorithm is applicable with no knowledge of processor count.
+/// This algorithm is more efficient than the variant that accepts a variable amount of data.
 ///
 /// # Parameters
 /// - `comm` mpi communicator
@@ -26,6 +28,66 @@ pub fn inefficient_sort(comm: &dyn Communicator, data: &mut [u64]) {
     } else {
         root.gather_into(data);
         root.scatter_into(data);
+    }
+}
+
+/// A very inefficient sorting algorithm that just gathers all data, sorts it locally and
+/// re-distributes it. This is technically worse than the theoretical alternative and matrix-sort
+/// (which requires two integers that divide the processor count),
+/// but this algorithm is applicable with no knowledge of processor count.
+///
+/// # Parameters
+/// - `comm` mpi communicator
+/// - `data` partial data of this process.
+///
+/// # Returns
+/// A vector containing the p-th part of the sorted data, where p is the count of processes
+pub fn inefficient_sort_var(comm: &dyn Communicator, data: &[u64]) -> Vec<u64> {
+    let rank = comm.rank() as usize;
+    let world_size = comm.size() as usize;
+
+    let data_size = data.len() as i32;
+    if rank == 0 {
+        // gather all data sizes and then gather all data
+        let mut counts = vec![0i32; world_size];
+        comm.this_process().gather_into_root(&data_size, &mut counts);
+
+        let mut displs = vec![0i32; world_size];
+        for i in 1..world_size {
+            displs[i] = displs[i - 1] + counts[i - 1];
+        }
+
+        let mut recv_buffer = vec![0u64; (displs[world_size - 1] + counts[world_size - 1]) as usize];
+        let mut partition = PartitionMut::new(&mut recv_buffer, counts.borrow(), displs.borrow());
+        comm.this_process().gather_varcount_into_root(data, &mut partition);
+
+        // sort the data
+        recv_buffer.sort_unstable();
+
+        // calculate new counts by dividing the data into equal parts and adding the remainder on
+        // the first processes
+        let mut counts = vec![(recv_buffer.len() / world_size) as i32; world_size];
+        counts[0..recv_buffer.len() % world_size].iter_mut().for_each(|x| *x += 1);
+        for i in 1..world_size {
+            displs[i] = displs[i - 1] + counts[i - 1];
+        }
+        let partition = Partition::new(&recv_buffer, counts.borrow(), displs.borrow());
+
+        // scatter the sorted data back to the processes
+        let mut data_size: i32 = 0;
+        comm.this_process().scatter_into_root(&counts, &mut data_size);
+        let mut data = vec![0u64; data_size as usize];
+        comm.this_process().scatter_varcount_into_root(&partition, &mut data);
+        data
+    } else {
+        comm.process_at_rank(0).gather_into(&data_size);
+        comm.process_at_rank(0).gather_varcount_into(data);
+
+        let mut data_size: i32 = 0;
+        comm.process_at_rank(0).scatter_into(&mut data_size);
+        let mut data = vec![0u64; data_size as usize];
+        comm.process_at_rank(0).scatter_varcount_into(&mut data);
+        data
     }
 }
 
@@ -207,10 +269,12 @@ pub fn matrix_rank(comm: &dyn Communicator, data: &[u64], ranks: &mut [u64]) {
     }
 }
 
+/// Those are just some sanity checks for the algorithms.
+/// They are not exhaustive and only check for obvious regressions.
 #[cfg(test)]
 mod tests {
     use rusty_fork::rusty_fork_test;
-    use crate::{inefficient_sort, matrix_rank};
+    use crate::{inefficient_sort, inefficient_sort_var, matrix_rank};
 
     rusty_fork_test! {
         #[test]
@@ -220,6 +284,23 @@ mod tests {
             let world = universe.world();
 
             inefficient_sort(&world, &mut data);
+            let expected = [1, 2, 4, 4, 6, 7, 23, 23, 23, 36, 234, 234, 234, 1362u64];
+            assert_eq!(expected.len(), data.len());
+            expected
+                .iter()
+                .zip(data.iter())
+                .for_each(|(i, j)| assert_eq!(*i, *j));
+        }
+    }
+
+    rusty_fork_test! {
+        #[test]
+        fn test_inefficient_sort_var() {
+            let data = [234, 23, 4, 234, 23, 4, 234, 23, 2, 1362, 6, 1, 36, 7];
+            let universe = mpi::initialize().unwrap();
+            let world = universe.world();
+
+            let data = inefficient_sort_var(&world, &data);
             let expected = [1, 2, 4, 4, 6, 7, 23, 23, 23, 36, 234, 234, 234, 1362u64];
             assert_eq!(expected.len(), data.len());
             expected
