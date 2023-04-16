@@ -12,3 +12,5 @@ rdxsort = { version = "0.3", optional = true }
 
 [dev-dependencies]
 rusty-fork = "0.3.0"
+criterion = { version = "0.4", features = ["html_reports"] }
+mpirion = { version = "0.1.0", git = "https://github.com/Cydhra/mpirion" }
