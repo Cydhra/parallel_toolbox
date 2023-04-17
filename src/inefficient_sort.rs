@@ -1,9 +1,10 @@
-use mpi::collective::SystemOperation;
 use std::borrow::Borrow;
 
+use mpi::collective::SystemOperation;
 use mpi::datatype::{Partition, PartitionMut};
 use mpi::traits::*;
 use mpi::Rank;
+use num::Zero;
 
 /// A very inefficient sorting algorithm that just gathers all data, sorts it locally and
 /// re-distributes it. This is technically worse than the theoretical alternative and matrix-sort
@@ -15,10 +16,15 @@ use mpi::Rank;
 /// - `comm` mpi communicator
 /// - `data` partial data of this process. Must not be very much and must be of equal size on all
 /// processes. The buffer will be overwritten with the sorted data
-pub fn inefficient_sort(comm: &dyn Communicator, data: &mut [u64]) {
+pub fn inefficient_sort<T>(comm: &dyn Communicator, data: &mut [T])
+where
+    T: Clone + Ord + Zero,
+    [T]: Buffer + BufferMut,
+    Vec<T>: Buffer + BufferMut,
+{
     let rank = comm.rank() as usize;
     let world_size = comm.size() as usize;
-    let mut recv_buffer = vec![0u64; data.len() * world_size];
+    let mut recv_buffer = vec![T::zero(); data.len() * world_size];
     let root = comm.process_at_rank(0);
 
     if rank == 0 {
@@ -42,7 +48,12 @@ pub fn inefficient_sort(comm: &dyn Communicator, data: &mut [u64]) {
 ///
 /// # Returns
 /// A vector containing the p-th part of the sorted data, where p is the count of processes
-pub fn inefficient_sort_var(comm: &dyn Communicator, data: &[u64]) -> Vec<u64> {
+pub fn inefficient_sort_var<T>(comm: &dyn Communicator, data: &[T]) -> Vec<T>
+where
+    T: Clone + Ord + Zero,
+    [T]: Buffer + BufferMut,
+    Vec<T>: Buffer + BufferMut,
+{
     let rank = comm.rank() as usize;
     let world_size = comm.size() as usize;
 
@@ -59,7 +70,7 @@ pub fn inefficient_sort_var(comm: &dyn Communicator, data: &[u64]) -> Vec<u64> {
         }
 
         let mut recv_buffer =
-            vec![0u64; (displs[world_size - 1] + counts[world_size - 1]) as usize];
+            vec![T::zero(); (displs[world_size - 1] + counts[world_size - 1]) as usize];
         let mut partition = PartitionMut::new(&mut recv_buffer, counts.borrow(), displs.borrow());
         comm.this_process()
             .gather_varcount_into_root(data, &mut partition);
@@ -82,7 +93,7 @@ pub fn inefficient_sort_var(comm: &dyn Communicator, data: &[u64]) -> Vec<u64> {
         let mut data_size: i32 = 0;
         comm.this_process()
             .scatter_into_root(&counts, &mut data_size);
-        let mut data = vec![0u64; data_size as usize];
+        let mut data = vec![T::zero(); data_size as usize];
         comm.this_process()
             .scatter_varcount_into_root(&partition, &mut data);
         data
@@ -92,7 +103,7 @@ pub fn inefficient_sort_var(comm: &dyn Communicator, data: &[u64]) -> Vec<u64> {
 
         let mut data_size: i32 = 0;
         comm.process_at_rank(0).scatter_into(&mut data_size);
-        let mut data = vec![0u64; data_size as usize];
+        let mut data = vec![T::zero(); data_size as usize];
         comm.process_at_rank(0).scatter_varcount_into(&mut data);
         data
     }
@@ -101,7 +112,10 @@ pub fn inefficient_sort_var(comm: &dyn Communicator, data: &[u64]) -> Vec<u64> {
 /// Rank data locally with stable tie breaking. The resulting ranks are a permutation of the series ``0..n``. The
 /// ranking requires time ``O(n*log(n))``. The resulting vector contains the ranks in the order of elements in ``data``,
 /// with ties broken in order of appearance.
-fn local_rank(data: &[u64]) -> Vec<u64> {
+fn local_rank<T>(data: &[T]) -> Vec<usize>
+where
+    T: Clone + Ord,
+{
     let mut sorted_data = data.to_vec();
     let mut ranking = Vec::with_capacity(data.len());
     sorted_data.sort_unstable();
@@ -109,8 +123,8 @@ fn local_rank(data: &[u64]) -> Vec<u64> {
     let mut tie_breaker = vec![0usize; data.len()];
 
     for i in 0..data.len() {
-        let partition = sorted_data.partition_point(|&x| x < data[i]);
-        ranking.push((partition + tie_breaker[partition]) as u64);
+        let partition = sorted_data.partition_point(|x| x.clone() < data[i]);
+        ranking.push(partition + tie_breaker[partition]);
         tie_breaker[partition] += 1;
     }
 
@@ -125,7 +139,12 @@ fn local_rank(data: &[u64]) -> Vec<u64> {
 /// - `comm` mpi communicator
 /// - `data` partial data of this process
 /// - `ranking` output parameter for the ranking, must be of equal size as the data slice
-pub fn inefficient_rank(comm: &dyn Communicator, data: &[u64], ranking: &mut [u64]) {
+pub fn inefficient_rank<T>(comm: &dyn Communicator, data: &[T], ranking: &mut [usize])
+where
+    T: Clone + Ord + Zero,
+    [T]: Buffer + BufferMut,
+    Vec<T>: Buffer + BufferMut,
+{
     assert_eq!(data.len(), ranking.len());
 
     let rank = comm.rank() as usize;
@@ -133,7 +152,7 @@ pub fn inefficient_rank(comm: &dyn Communicator, data: &[u64], ranking: &mut [u6
     let root = comm.process_at_rank(0);
 
     if rank == 0 {
-        let mut recv_buffer = vec![0u64; data.len() * world_size];
+        let mut recv_buffer = vec![T::zero(); data.len() * world_size];
         root.gather_into_root(data, &mut recv_buffer);
         let all_rankings = local_rank(&recv_buffer);
         root.scatter_into_root(&all_rankings, ranking);
@@ -150,7 +169,12 @@ pub fn inefficient_rank(comm: &dyn Communicator, data: &[u64], ranking: &mut [u6
 /// - `comm` mpi communicator
 /// - `data` partial data of this process
 /// - `ranking` output parameter for the ranking
-pub fn inefficient_rank_var(comm: &dyn Communicator, data: &[u64], ranking: &mut [u64]) {
+pub fn inefficient_rank_var<T>(comm: &dyn Communicator, data: &[T], ranking: &mut [usize])
+where
+    T: Clone + Ord + Zero,
+    [T]: Buffer + BufferMut,
+    Vec<T>: Buffer + BufferMut,
+{
     assert_eq!(data.len(), ranking.len());
 
     let world_size = comm.size() as usize;
@@ -168,7 +192,7 @@ pub fn inefficient_rank_var(comm: &dyn Communicator, data: &[u64], ranking: &mut
 
         // collect data
         let mut all_data_vec =
-            vec![0u64; (displs[displs.len() - 1] + counts[counts.len() - 1]) as usize];
+            vec![T::zero(); (displs[displs.len() - 1] + counts[counts.len() - 1]) as usize];
         let mut all_data = PartitionMut::new(&mut all_data_vec, counts.borrow(), displs.borrow());
         root_process.gather_varcount_into_root(data, &mut all_data);
 
@@ -281,10 +305,11 @@ pub fn matrix_rank(comm: &dyn Communicator, data: &[u64], ranks: &mut [u64]) {
 /// They are not exhaustive and only check for obvious regressions.
 #[cfg(test)]
 mod tests {
+    use rusty_fork::rusty_fork_test;
+
     use crate::{
         inefficient_rank, inefficient_rank_var, inefficient_sort, inefficient_sort_var, matrix_rank,
     };
-    use rusty_fork::rusty_fork_test;
 
     rusty_fork_test! {
         #[test]
@@ -323,15 +348,15 @@ mod tests {
     rusty_fork_test! {
         #[test]
         fn test_inefficient_rank() {
-            let data = [234, 23, 4, 235, 24];
-            let mut ranking = vec![0u64; data.len()];
+            let data = [234u64, 23, 4, 235, 24];
+            let mut ranking = vec![0usize; data.len()];
 
             let universe = mpi::initialize().unwrap();
             let world = universe.world();
 
             inefficient_rank(&world, &data, &mut ranking);
 
-            let expected = [3, 1, 0, 4, 2];
+            let expected = [3usize, 1, 0, 4, 2];
             assert_eq!(expected.len(), ranking.len());
             expected
                 .iter()
@@ -344,7 +369,7 @@ mod tests {
         #[test]
         fn test_inefficient_rank_var_with_ties() {
             let data = [1, 1, 4, 5, 24];
-            let mut ranking = vec![0u64; data.len()];
+            let mut ranking = vec![0usize; data.len()];
 
             let universe = mpi::initialize().unwrap();
             let world = universe.world();
@@ -360,7 +385,7 @@ mod tests {
         #[test]
         fn test_inefficient_rank_var() {
             let data = [234, 23, 4, 235, 24];
-            let mut ranking = vec![0u64; data.len()];
+            let mut ranking = vec![0usize; data.len()];
 
             let universe = mpi::initialize().unwrap();
             let world = universe.world();
@@ -379,7 +404,7 @@ mod tests {
         #[test]
         fn test_inefficient_rank_with_ties() {
             let data = [1, 1, 4, 5, 24];
-            let mut ranking = vec![0u64; data.len()];
+            let mut ranking = vec![0usize; data.len()];
 
             let universe = mpi::initialize().unwrap();
             let world = universe.world();
@@ -394,7 +419,7 @@ mod tests {
     rusty_fork_test! {
         #[test]
         fn test_matrix_rank() {
-            let data = [1, 2, 3, 4, 5, 6, 7, 8, 9];
+            let data = [1u64, 2, 3, 4, 5, 6, 7, 8, 9];
             let mut ranking = vec![0u64; data.len()];
 
             let universe = mpi::initialize().unwrap();
@@ -402,7 +427,7 @@ mod tests {
 
             matrix_rank(&world, &data, &mut ranking);
 
-            let expected = [0, 1, 2, 3, 4, 5, 6, 7, 8];
+            let expected = [0u64, 1, 2, 3, 4, 5, 6, 7, 8];
             assert_eq!(expected.len(), ranking.len());
             expected
                 .iter()

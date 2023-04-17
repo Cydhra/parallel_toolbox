@@ -22,10 +22,13 @@ or by confusing data types.
 #### Inefficient Ranking and Sorting
 A few inefficient routines for ranking and sorting are provided,
 which are reused in more efficient algorithms as the base case for recursions.
+The implementations (short of `matrix_rank` for now) are generic;
+the ranking variants return `usize`, because that is the indexing type which makes sense for ranks.
 * `inefficient_sort` sends all data to one processor, which will sort and redistribute it. It is the most
   inefficient and slowest algorithm, but works in all cases
 * `inefficient_rank` sends all data to one processor, which will calculate ranks and return them to the original 
-  processors. Otherwise it is the same design as `inefficient_sort`
+  processors. 
+Otherwise, it is the same design as `inefficient_sort`
 * `matrix_rank` requires a square number of processors, but is theoretically more efficient than alternatives
 
 #### Sample Sort

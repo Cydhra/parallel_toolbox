@@ -95,7 +95,7 @@ pub fn parallel_select_k(comm: &dyn Communicator, data: &[u64], k: usize) -> Vec
         return data
             .iter()
             .zip(ranking.iter())
-            .filter(|(_, rank)| **rank < k as u64)
+            .filter(|(_, &rank)| rank < k as usize)
             .map(|(itm, _)| *itm)
             .collect();
     }
