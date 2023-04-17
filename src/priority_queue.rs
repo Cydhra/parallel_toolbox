@@ -14,6 +14,14 @@ pub struct ParallelPriorityQueue<'a, const OVERSAMPLING: usize> {
     rng: ThreadRng,
 }
 
+// TODO figure out in benchmarks what a good default oversampling factor is
+impl<'a> ParallelPriorityQueue<'a, 4> {
+    /// Create a new ParallelPriorityQueue with default oversampling factor of 4
+    pub fn new_default(comm: &'a dyn Communicator) -> ParallelPriorityQueue<'a, 4> {
+        ParallelPriorityQueue::new(comm)
+    }
+}
+
 impl<'a, const OVERSAMPLING: usize> ParallelPriorityQueue<'a, OVERSAMPLING> {
     pub fn new(comm: &'a dyn Communicator) -> ParallelPriorityQueue<'a, OVERSAMPLING> {
         ParallelPriorityQueue {
@@ -155,7 +163,7 @@ mod tests {
             let universe = mpi::initialize().unwrap();
             let world = universe.world();
 
-            let mut pq = ParallelPriorityQueue::<4>::new(&world);
+            let mut pq = ParallelPriorityQueue::new_default(&world);
 
             let mut elements = vec![0u64; 10];
             elements.fill_with(|| rand::random());
@@ -184,7 +192,7 @@ mod tests {
             let universe = mpi::initialize().unwrap();
             let world = universe.world();
 
-            let mut pq = ParallelPriorityQueue::<4>::new(&world);
+            let mut pq = ParallelPriorityQueue::new_default(&world);
 
             let mut elements = vec![0u64; 10];
             elements.fill_with(|| rand::random());
