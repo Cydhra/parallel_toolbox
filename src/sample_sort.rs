@@ -29,7 +29,7 @@ where
     [T]: Buffer + BufferMut,
     Vec<T>: BufferMut,
 {
-    generic_sort(comm, data, total_data, <[T]>::sort_unstable)
+    sample_generic_sort(comm, data, total_data, <[T]>::sort_unstable)
 }
 
 
@@ -58,7 +58,7 @@ pub fn sample_radix_sort<T>(comm: &dyn Communicator, data: &mut [T], total_data:
         Vec<T>: BufferMut,
 {
 
-    generic_sort(comm, data, total_data, rdxsort::RdxSort::rdxsort)
+    sample_generic_sort(comm, data, total_data, rdxsort::RdxSort::rdxsort)
 }
 
 /// Sort a set of numerical data of which each processing unit has one part. The sorting algorithm
@@ -66,8 +66,21 @@ pub fn sample_radix_sort<T>(comm: &dyn Communicator, data: &mut [T], total_data:
 /// call, processing units have a sorted slice of data, which are all approximately of equal size, and
 /// sorted in ascending order with respect to each processing unit's rank.
 ///
-/// The data is locally sorted by a sorting algorithm given as parameter
-fn generic_sort<T>(comm: &dyn Communicator, data: &mut [T], total_data: usize, local_sort: fn(&mut [T])) -> Vec<T>
+/// The data is locally sorted by a sorting algorithm given as parameter. This allows for using
+/// different sorting algorithms, such as radix sort. The default sorting algorithm is quick sort,
+/// which is available using the convenience function `sample_quick_sort`, another option is radix
+/// sort, which is available using the convenience function `sample_radix_sort` when using the
+/// `rdxsort` feature.
+///
+/// # Parameters
+/// - `comm` mpi communicator
+/// - `data` partial data local to this processor
+/// - `total_data` total amount of data distributed over all processors. This value need not be
+/// exact, however underestimating will lead to a worse distribution of data across processors, and
+/// overestimating will slow down the algorithm.
+/// - `local_sort` sorting algorithm to use for sorting the local data. This function must sort the
+/// data in place.
+pub fn sample_generic_sort<T>(comm: &dyn Communicator, data: &mut [T], total_data: usize, local_sort: fn(&mut [T])) -> Vec<T>
     where
         T: Clone + Equivalence + Ord + Zero,
         [T]: Buffer + BufferMut,
