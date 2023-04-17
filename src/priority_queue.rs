@@ -1,21 +1,21 @@
 use crate::parallel_select_k;
 use mpi::collective::SystemOperation;
 use mpi::datatype::{Partition, PartitionMut};
+use mpi::traits::*;
 use rand::rngs::ThreadRng;
 use rand::{thread_rng, Rng};
 use std::borrow::Borrow;
 use std::cmp::{min, Reverse};
 use std::collections::BinaryHeap;
-use mpi::traits::*;
 
-pub struct ParallelPriorityQueue<'a> {
+pub struct ParallelPriorityQueue<'a, const OVERSAMPLING: usize> {
     communicator: &'a dyn Communicator,
     bin_heap: BinaryHeap<Reverse<u64>>,
     rng: ThreadRng,
 }
 
-impl<'a> ParallelPriorityQueue<'a> {
-    pub fn new(comm: &'a dyn Communicator) -> ParallelPriorityQueue<'a> {
+impl<'a, const OVERSAMPLING: usize> ParallelPriorityQueue<'a, OVERSAMPLING> {
+    pub fn new(comm: &'a dyn Communicator) -> ParallelPriorityQueue<'a, OVERSAMPLING> {
         ParallelPriorityQueue {
             communicator: comm,
             bin_heap: BinaryHeap::new(),
@@ -90,17 +90,21 @@ impl<'a> ParallelPriorityQueue<'a> {
         let world_size = self.communicator.size() as usize;
         let rt_world_size = (world_size as f64).sqrt() as usize;
 
-        let mut pool_buffer = vec![0u64; min(rt_world_size, self.bin_heap.len())];
-
-        // delete the sqrt(p) smallest elements and store them in the selection pool
-        // TODO this should probably use an oversampling factor
+        // delete the sqrt(p) * OVERSAMPLING smallest elements and store them in the selection pool
+        let mut pool_buffer = vec![0u64; min(rt_world_size * OVERSAMPLING, self.bin_heap.len())];
         for item in &mut pool_buffer {
             *item = self.bin_heap.pop().unwrap().0;
         }
 
         // perform select_k on the selection pool and distribute the result among all p processing units
         let smallest_elements = parallel_select_k(self.communicator, &pool_buffer, world_size);
-        // TODO fill remaining elements back into the queue, but watch out for duplicates
+        // TODO rewrite select_k to return indices, so that we can remove the elements from the pool
+        //  without accidentally removing duplicates
+
+        // TODO also retain this buffer across multiple calls to delete_min to avoid
+        //  repeatedly moving elements between the queue and the pool
+        pool_buffer.retain_mut(|e| !smallest_elements.contains(e));
+        pool_buffer.iter().for_each(|e| self.local_insert(*e));
 
         // enumerate the smallest element using a prefix sum and distribute the elements among the processors accordingly
         let mut prefix_sum = 0usize;
@@ -139,12 +143,11 @@ impl<'a> ParallelPriorityQueue<'a> {
 
 #[cfg(test)]
 mod tests {
-    use rusty_fork::rusty_fork_test;
     ///! These tests are sanity checks for the parallel priority queue implementation. They do not
     ///! check for the correctness of the parallel implementation, but rather for the correctness of
     ///! the local implementation.
-
     use super::*;
+    use rusty_fork::rusty_fork_test;
 
     rusty_fork_test! {
         #[test]
@@ -152,7 +155,7 @@ mod tests {
             let universe = mpi::initialize().unwrap();
             let world = universe.world();
 
-            let mut pq = ParallelPriorityQueue::new(&world);
+            let mut pq = ParallelPriorityQueue::<4>::new(&world);
 
             let mut elements = vec![0u64; 10];
             elements.fill_with(|| rand::random());
@@ -181,7 +184,7 @@ mod tests {
             let universe = mpi::initialize().unwrap();
             let world = universe.world();
 
-            let mut pq = ParallelPriorityQueue::new(&world);
+            let mut pq = ParallelPriorityQueue::<4>::new(&world);
 
             let mut elements = vec![0u64; 10];
             elements.fill_with(|| rand::random());
