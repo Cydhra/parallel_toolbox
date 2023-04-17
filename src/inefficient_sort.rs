@@ -274,7 +274,7 @@ pub fn matrix_rank(comm: &dyn Communicator, data: &[u64], ranks: &mut [u64]) {
 #[cfg(test)]
 mod tests {
     use rusty_fork::rusty_fork_test;
-    use crate::{inefficient_sort, inefficient_sort_var, matrix_rank};
+    use crate::{inefficient_rank, inefficient_sort, inefficient_sort_var, matrix_rank};
 
     rusty_fork_test! {
         #[test]
@@ -307,6 +307,41 @@ mod tests {
                 .iter()
                 .zip(data.iter())
                 .for_each(|(i, j)| assert_eq!(*i, *j));
+        }
+    }
+
+    rusty_fork_test! {
+        #[test]
+        fn test_inefficient_rank() {
+            let data = [234, 23, 4, 235, 24];
+            let mut ranking = vec![0u64; data.len()];
+
+            let universe = mpi::initialize().unwrap();
+            let world = universe.world();
+
+            inefficient_rank(&world, &data, &mut ranking);
+            let expected = [3, 1, 0, 4, 2];
+            assert_eq!(expected.len(), ranking.len());
+            expected
+                .iter()
+                .zip(ranking.iter())
+                .for_each(|(i, j)| assert_eq!(*i, *j));
+        }
+    }
+
+    rusty_fork_test! {
+        #[test]
+        fn test_inefficient_rank_with_ties() {
+            let data = [1, 1, 4, 5, 24];
+            let mut ranking = vec![0u64; data.len()];
+
+            let universe = mpi::initialize().unwrap();
+            let world = universe.world();
+
+            inefficient_rank(&world, &data, &mut ranking);
+            assert!(ranking[0] == 0 || ranking[0] == 1);
+            assert!(ranking[1] == 0 || ranking[1] == 1);
+            assert!(ranking[0] != ranking[1]);
         }
     }
 
