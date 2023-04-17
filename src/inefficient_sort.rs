@@ -2,8 +2,8 @@ use mpi::collective::SystemOperation;
 use std::borrow::Borrow;
 
 use mpi::datatype::{Partition, PartitionMut};
-use mpi::Rank;
 use mpi::traits::*;
+use mpi::Rank;
 
 /// A very inefficient sorting algorithm that just gathers all data, sorts it locally and
 /// re-distributes it. This is technically worse than the theoretical alternative and matrix-sort
@@ -57,7 +57,8 @@ pub fn inefficient_sort_var(comm: &dyn Communicator, data: &[u64]) -> Vec<u64> {
             displs[i] = displs[i - 1] + counts[i - 1];
         }
 
-        let mut recv_buffer = vec![0u64; (displs[world_size - 1] + counts[world_size - 1]) as usize];
+        let mut recv_buffer =
+            vec![0u64; (displs[world_size - 1] + counts[world_size - 1]) as usize];
         let mut partition = PartitionMut::new(&mut recv_buffer, counts.borrow(), displs.borrow());
         comm.this_process().gather_varcount_into_root(data, &mut partition);
 
@@ -67,7 +68,9 @@ pub fn inefficient_sort_var(comm: &dyn Communicator, data: &[u64]) -> Vec<u64> {
         // calculate new counts by dividing the data into equal parts and adding the remainder on
         // the first processes
         let mut counts = vec![(recv_buffer.len() / world_size) as i32; world_size];
-        counts[0..recv_buffer.len() % world_size].iter_mut().for_each(|x| *x += 1);
+        counts[0..recv_buffer.len() % world_size]
+            .iter_mut()
+            .for_each(|x| *x += 1);
         for i in 1..world_size {
             displs[i] = displs[i - 1] + counts[i - 1];
         }
@@ -273,8 +276,10 @@ pub fn matrix_rank(comm: &dyn Communicator, data: &[u64], ranks: &mut [u64]) {
 /// They are not exhaustive and only check for obvious regressions.
 #[cfg(test)]
 mod tests {
+    use crate::{
+        inefficient_rank, inefficient_rank_var, inefficient_sort, inefficient_sort_var, matrix_rank,
+    };
     use rusty_fork::rusty_fork_test;
-    use crate::{inefficient_rank, inefficient_sort, inefficient_sort_var, matrix_rank};
 
     rusty_fork_test! {
         #[test]
@@ -320,6 +325,41 @@ mod tests {
             let world = universe.world();
 
             inefficient_rank(&world, &data, &mut ranking);
+            let expected = [3, 1, 0, 4, 2];
+            assert_eq!(expected.len(), ranking.len());
+            expected
+                .iter()
+                .zip(ranking.iter())
+                .for_each(|(i, j)| assert_eq!(*i, *j));
+        }
+    }
+
+    rusty_fork_test! {
+        #[test]
+        fn test_inefficient_rank_var_with_ties() {
+            let data = [1, 1, 4, 5, 24];
+            let mut ranking = vec![0u64; data.len()];
+
+            let universe = mpi::initialize().unwrap();
+            let world = universe.world();
+
+            inefficient_rank_var(&world, &data, &mut ranking);
+            assert!(ranking[0] == 0 || ranking[0] == 1);
+            assert!(ranking[1] == 0 || ranking[1] == 1);
+            assert!(ranking[0] != ranking[1]);
+        }
+    }
+
+    rusty_fork_test! {
+        #[test]
+        fn test_inefficient_rank_var() {
+            let data = [234, 23, 4, 235, 24];
+            let mut ranking = vec![0u64; data.len()];
+
+            let universe = mpi::initialize().unwrap();
+            let world = universe.world();
+
+            inefficient_rank_var(&world, &data, &mut ranking);
             let expected = [3, 1, 0, 4, 2];
             assert_eq!(expected.len(), ranking.len());
             expected
