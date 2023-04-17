@@ -1,10 +1,12 @@
 use std::borrow::Borrow;
 
 use mpi::datatype::{Partition, PartitionMut};
-use mpi::traits::{Communicator, CommunicatorCollectives, Root};
+use mpi::traits::{Buffer, BufferMut, Communicator, CommunicatorCollectives, Equivalence, Root};
+use num::Zero;
 
 use crate::util::select_sample;
 
+// TODO perform some benchmarks to set this constant to an appropriate value
 const INEFFICIENT_SORT_THRESHOLD: usize = 512;
 
 /// Sort a set of numerical data of which each processing unit has one part. The sorting algorithm
@@ -18,13 +20,18 @@ const INEFFICIENT_SORT_THRESHOLD: usize = 512;
 /// - `total_data` total amount of data distributed over all processors. This value need not be
 /// exact, however underestimating will lead to a worse distribution of data across processors, and
 /// overestimating will slow down the algorithm.
-pub fn sample_sort(comm: &dyn Communicator, data: &mut [u64], total_data: usize) -> Vec<u64> {
+pub fn sample_sort<T>(comm: &dyn Communicator, data: &mut [T], total_data: usize) -> Vec<T>
+where
+    T: Clone + Equivalence + Ord + Zero,
+    [T]: Buffer + BufferMut,
+    Vec<T>: BufferMut,
+{
     let processes = comm.size() as usize;
     let data_per_client: f32 = total_data as f32 / processes as f32;
     let sample_size = (16f32 * data_per_client.ln()) as usize;
 
-    let mut local_sample = vec![0u64; sample_size];
-    let mut pivots = vec![0u64; processes - 1];
+    let mut local_sample = vec![T::zero(); sample_size];
+    let mut pivots = vec![T::zero(); processes - 1];
 
     select_sample(data, &mut local_sample);
     select_pivots(comm, &mut local_sample, &mut pivots);
@@ -34,8 +41,8 @@ pub fn sample_sort(comm: &dyn Communicator, data: &mut [u64], total_data: usize)
 
     // bucket sort
     for n in &*data {
-        let j = pivots.partition_point(|&x| x < *n);
-        send_buffers[j].push(*n)
+        let j = pivots.partition_point(|x| x.clone() < *n);
+        send_buffers[j].push(n.clone())
     }
 
     // append all send buffers into a contiguous buffer for MPI, and store counts and displacements
@@ -47,7 +54,7 @@ pub fn sample_sort(comm: &dyn Communicator, data: &mut [u64], total_data: usize)
         counts.push(buffer.len() as i32);
         displs.push(offset as i32);
 
-        data[offset..offset + buffer.len()].copy_from_slice(&buffer[..]);
+        data[offset..offset + buffer.len()].clone_from_slice(&buffer[..]);
         offset += buffer.len();
     }
 
@@ -63,7 +70,7 @@ pub fn sample_sort(comm: &dyn Communicator, data: &mut [u64], total_data: usize)
         })
         .collect();
 
-    let mut recv_buffer = vec![0; recv_counts.iter().sum::<i32>() as usize];
+    let mut recv_buffer = vec![T::zero(); recv_counts.iter().sum::<i32>() as usize];
     let mut recv_partition =
         PartitionMut::new(&mut recv_buffer, recv_counts.borrow(), recv_displs.borrow());
 
@@ -82,7 +89,12 @@ pub fn sample_sort(comm: &dyn Communicator, data: &mut [u64], total_data: usize)
 /// - `data` data sample from which to select pivots
 /// - `out` output buffer to store the pivots in. This must be a slice of length exactly equal to
 /// the communicator's size minus one.
-fn select_pivots(comm: &dyn Communicator, data: &mut [u64], out: &mut [u64]) {
+fn select_pivots<T>(comm: &dyn Communicator, data: &mut [T], out: &mut [T])
+where
+    T: Clone + Equivalence + Ord + Zero,
+    [T]: Buffer + BufferMut,
+    Vec<T>: BufferMut,
+{
     let sample_len = data.len();
     let proc_count = comm.size() as usize;
 
@@ -97,12 +109,12 @@ fn select_pivots(comm: &dyn Communicator, data: &mut [u64], out: &mut [u64]) {
 
         // gather all samples on root, sort them, select pivots
         if comm.rank() == root.rank() {
-            let mut buffer = vec![0u64; sample_len * proc_count];
+            let mut buffer = vec![T::zero(); sample_len * proc_count];
             root.gather_into_root(data, &mut buffer);
             buffer.sort_unstable();
 
             for i in 0..(proc_count - 1) {
-                out[i] = buffer[(i + 1) * sample_len];
+                out[i] = buffer[(i + 1) * sample_len].clone();
             }
         } else {
             root.gather_into(data);
@@ -113,15 +125,15 @@ fn select_pivots(comm: &dyn Communicator, data: &mut [u64], out: &mut [u64]) {
     } else {
         // sort sample, select pivots on each processor, gossip them
         let sorted_sample = sample_sort(comm, data, sample_len * proc_count);
-        let local_pivot = sorted_sample[sorted_sample.len() - 1];
+        let local_pivot = sorted_sample[sorted_sample.len() - 1].clone();
         comm.all_gather_into(&local_pivot, out);
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use rusty_fork::rusty_fork_test;
     use crate::sample_sort;
+    use rusty_fork::rusty_fork_test;
 
     rusty_fork_test! {
         #[test]
