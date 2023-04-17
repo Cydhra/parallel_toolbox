@@ -5,7 +5,7 @@ use std::env;
 use std::process::exit;
 use std::time::Instant;
 
-use parallel_toolbox::sample_sort;
+use parallel_toolbox::{sample_quick_sort};
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -40,7 +40,7 @@ fn main() {
 
     // call sorting algorithm
     let start = Instant::now();
-    let data = sample_sort(&world, &mut data, initial_data_amount);
+    let data = sample_quick_sort(&world, &mut data, initial_data_amount);
     println!(
         "process {} sorted {} of {} qwords in {} ms",
         rank,

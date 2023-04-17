@@ -4,12 +4,11 @@ version = "0.1.0"
 edition = "2021"
 rust-version = "1.57"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
 [dependencies]
 mpi = { version = "0.6", features = ["user-operations", "derive"], git = "https://github.com/Cydhra/rsmpi", branch="sized_process" }
 rand = "0.8.5"
 num = "0.4"
+rdxsort = { version = "0.3", optional = true }
 
 [dev-dependencies]
 rusty-fork = "0.3.0"

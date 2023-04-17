@@ -14,17 +14,64 @@ const INEFFICIENT_SORT_THRESHOLD: usize = 512;
 /// call, processing units have a sorted slice of data, which are all approximately of equal size, and
 /// sorted in ascending order with respect to each processing unit's rank.
 ///
+/// The local sort is performed by quick sort. An alternative using radix sort is available with the
+/// `rdxsort` feature.
+///
 /// # Parameters
 /// - `comm` mpi communicator
 /// - `data` partial data local to this processor
 /// - `total_data` total amount of data distributed over all processors. This value need not be
 /// exact, however underestimating will lead to a worse distribution of data across processors, and
 /// overestimating will slow down the algorithm.
-pub fn sample_sort<T>(comm: &dyn Communicator, data: &mut [T], total_data: usize) -> Vec<T>
+pub fn sample_quick_sort<T>(comm: &dyn Communicator, data: &mut [T], total_data: usize) -> Vec<T>
 where
     T: Clone + Equivalence + Ord + Zero,
     [T]: Buffer + BufferMut,
     Vec<T>: BufferMut,
+{
+    generic_sort(comm, data, total_data, <[T]>::sort_unstable)
+}
+
+
+/// Sort a set of numerical data of which each processing unit has one part. The sorting algorithm
+/// is optimized for distributed memory, i.e. data communication is kept to a minimum. After the
+/// call, processing units have a sorted slice of data, which are all approximately of equal size, and
+/// sorted in ascending order with respect to each processing unit's rank.
+///
+/// The local sort is performed by radix sort rather than quick sort. This is faster for large
+/// datasets, but slower for small datasets, especially with large data-types.
+///
+/// The initial sample sort is still performed by a comparative bucket sort, to ensure equal
+/// distribution of data across processors.
+///
+/// # Parameters
+/// - `comm` mpi communicator
+/// - `data` partial data local to this processor
+/// - `total_data` total amount of data distributed over all processors. This value need not be
+/// exact, however underestimating will lead to a worse distribution of data across processors, and
+/// overestimating will slow down the algorithm.
+#[cfg(feature = "rdxsort")]
+pub fn sample_radix_sort<T>(comm: &dyn Communicator, data: &mut [T], total_data: usize) -> Vec<T>
+    where
+        T: Clone + Equivalence + Ord + Zero + rdxsort::RdxSortTemplate,
+        [T]: Buffer + BufferMut,
+        Vec<T>: BufferMut,
+{
+
+    generic_sort(comm, data, total_data, rdxsort::RdxSort::rdxsort)
+}
+
+/// Sort a set of numerical data of which each processing unit has one part. The sorting algorithm
+/// is optimized for distributed memory, i.e. data communication is kept to a minimum. After the
+/// call, processing units have a sorted slice of data, which are all approximately of equal size, and
+/// sorted in ascending order with respect to each processing unit's rank.
+///
+/// The data is locally sorted by a sorting algorithm given as parameter
+fn generic_sort<T>(comm: &dyn Communicator, data: &mut [T], total_data: usize, local_sort: fn(&mut [T])) -> Vec<T>
+    where
+        T: Clone + Equivalence + Ord + Zero,
+        [T]: Buffer + BufferMut,
+        Vec<T>: BufferMut,
 {
     let processes = comm.size() as usize;
     let data_per_client: f32 = total_data as f32 / processes as f32;
@@ -77,7 +124,7 @@ where
     // all to all exchange data and then quicksort it locally
     let partition = Partition::new(data, counts.borrow(), displs.borrow());
     comm.all_to_all_varcount_into(&partition, &mut recv_partition);
-    recv_buffer.sort_unstable();
+    local_sort(&mut recv_buffer);
 
     return recv_buffer;
 }
@@ -124,7 +171,7 @@ where
         root.broadcast_into(out);
     } else {
         // sort sample, select pivots on each processor, gossip them
-        let sorted_sample = sample_sort(comm, data, sample_len * proc_count);
+        let sorted_sample = sample_quick_sort(comm, data, sample_len * proc_count);
         let local_pivot = sorted_sample[sorted_sample.len() - 1].clone();
         comm.all_gather_into(&local_pivot, out);
     }
@@ -132,7 +179,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::sample_sort;
+    use crate::sample_quick_sort;
     use rusty_fork::rusty_fork_test;
 
     rusty_fork_test! {
@@ -143,7 +190,27 @@ mod tests {
             let universe = mpi::initialize().unwrap();
             let world = universe.world();
             let mut data = [6, 30, 574, 16, 2342, 53, 5, 4935, 3, 4];
-            let result = sample_sort(&world, &mut data, 10);
+            let result = sample_quick_sort(&world, &mut data, 10);
+            let expected = [3, 4, 5, 6, 16, 30, 53, 574, 2342, 4935];
+
+            assert_eq!(expected.len(), result.len(), "Result has wrong size");
+            assert!(
+                expected.iter().zip(result.iter()).all(|(a, b)| a == b),
+                "Result does not match expected array"
+            );
+        }
+    }
+
+    #[cfg(feature = "rdxsort")]
+    rusty_fork_test! {
+        #[test]
+        fn test_radix_sort() {
+            // this is just a sanity check. Since only one client is participating, the actual algorithm isn't tested
+
+            let universe = mpi::initialize().unwrap();
+            let world = universe.world();
+            let mut data = [6, 30, 574, 16, 2342, 53, 5, 4935, 3, 4];
+            let result = sample_quick_sort(&world, &mut data, 10);
             let expected = [3, 4, 5, 6, 16, 30, 53, 574, 2342, 4935];
 
             assert_eq!(expected.len(), result.len(), "Result has wrong size");
