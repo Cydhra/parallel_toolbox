@@ -92,7 +92,6 @@ pub fn parallel_select_k(comm: &dyn Communicator, data: &[u64], k: usize) -> Vec
         let mut ranking = vec![0; data.len()];
         inefficient_rank_var(comm, data, &mut ranking);
 
-        // todo this will return too many elements if some elements have the same rank
         return data
             .iter()
             .zip(ranking.iter())

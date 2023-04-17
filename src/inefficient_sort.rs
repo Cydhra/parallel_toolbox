@@ -50,7 +50,8 @@ pub fn inefficient_sort_var(comm: &dyn Communicator, data: &[u64]) -> Vec<u64> {
     if rank == 0 {
         // gather all data sizes and then gather all data
         let mut counts = vec![0i32; world_size];
-        comm.this_process().gather_into_root(&data_size, &mut counts);
+        comm.this_process()
+            .gather_into_root(&data_size, &mut counts);
 
         let mut displs = vec![0i32; world_size];
         for i in 1..world_size {
@@ -60,7 +61,8 @@ pub fn inefficient_sort_var(comm: &dyn Communicator, data: &[u64]) -> Vec<u64> {
         let mut recv_buffer =
             vec![0u64; (displs[world_size - 1] + counts[world_size - 1]) as usize];
         let mut partition = PartitionMut::new(&mut recv_buffer, counts.borrow(), displs.borrow());
-        comm.this_process().gather_varcount_into_root(data, &mut partition);
+        comm.this_process()
+            .gather_varcount_into_root(data, &mut partition);
 
         // sort the data
         recv_buffer.sort_unstable();
@@ -78,9 +80,11 @@ pub fn inefficient_sort_var(comm: &dyn Communicator, data: &[u64]) -> Vec<u64> {
 
         // scatter the sorted data back to the processes
         let mut data_size: i32 = 0;
-        comm.this_process().scatter_into_root(&counts, &mut data_size);
+        comm.this_process()
+            .scatter_into_root(&counts, &mut data_size);
         let mut data = vec![0u64; data_size as usize];
-        comm.this_process().scatter_varcount_into_root(&partition, &mut data);
+        comm.this_process()
+            .scatter_varcount_into_root(&partition, &mut data);
         data
     } else {
         comm.process_at_rank(0).gather_into(&data_size);
@@ -92,6 +96,25 @@ pub fn inefficient_sort_var(comm: &dyn Communicator, data: &[u64]) -> Vec<u64> {
         comm.process_at_rank(0).scatter_varcount_into(&mut data);
         data
     }
+}
+
+/// Rank data locally with stable tie breaking. The resulting ranks are a permutation of the series ``0..n``. The
+/// ranking requires time ``O(n*log(n))``. The resulting vector contains the ranks in the order of elements in ``data``,
+/// with ties broken in order of appearance.
+fn local_rank(data: &[u64]) -> Vec<u64> {
+    let mut sorted_data = data.to_vec();
+    let mut ranking = Vec::with_capacity(data.len());
+    sorted_data.sort_unstable();
+
+    let mut tie_breaker = vec![0usize; data.len()];
+
+    for i in 0..data.len() {
+        let partition = sorted_data.partition_point(|&x| x < data[i]);
+        ranking.push((partition + tie_breaker[partition]) as u64);
+        tie_breaker[partition] += 1;
+    }
+
+    ranking
 }
 
 /// A very inefficient ranking algorithm that just gathers all data, ranks it locally, and reports
@@ -107,22 +130,13 @@ pub fn inefficient_rank(comm: &dyn Communicator, data: &[u64], ranking: &mut [u6
 
     let rank = comm.rank() as usize;
     let world_size = comm.size() as usize;
-    let mut recv_buffer = vec![0u64; data.len() * world_size];
-    let mut rank_buffer = Vec::with_capacity(recv_buffer.len());
-
     let root = comm.process_at_rank(0);
 
     if rank == 0 {
+        let mut recv_buffer = vec![0u64; data.len() * world_size];
         root.gather_into_root(data, &mut recv_buffer);
-        let mut unsorted_buffer = vec![0u64; recv_buffer.len()];
-        unsorted_buffer.copy_from_slice(&recv_buffer);
-        recv_buffer.sort_unstable();
-
-        for n in unsorted_buffer {
-            rank_buffer.push(recv_buffer.partition_point(|x| *x < n));
-        }
-
-        root.scatter_into_root(&rank_buffer, ranking);
+        let all_rankings = local_rank(&recv_buffer);
+        root.scatter_into_root(&all_rankings, ranking);
     } else {
         root.gather_into(data);
         root.scatter_into(ranking);
@@ -143,35 +157,26 @@ pub fn inefficient_rank_var(comm: &dyn Communicator, data: &[u64], ranking: &mut
     let rank = comm.rank() as usize;
     let root_process = comm.process_at_rank(0);
 
-    // collect counts and displs
     if rank == 0 {
+        // collect counts and displs
         let mut counts: Vec<i32> = vec![0; world_size];
+        let mut displs = vec![0i32; world_size];
         root_process.gather_into_root(&(data.len() as i32), &mut counts);
+        for i in 1..world_size {
+            displs[i] = displs[i - 1] + counts[i - 1];
+        }
 
-        let displs: Vec<i32> = counts
-            .iter()
-            .scan(0, |acc, i| {
-                let tmp = *acc;
-                *acc += *i;
-                Some(tmp)
-            })
-            .collect();
-
+        // collect data
         let mut all_data_vec =
             vec![0u64; (displs[displs.len() - 1] + counts[counts.len() - 1]) as usize];
         let mut all_data = PartitionMut::new(&mut all_data_vec, counts.borrow(), displs.borrow());
-
         root_process.gather_varcount_into_root(data, &mut all_data);
 
-        let mut sorted_data = all_data_vec.iter().cloned().collect::<Vec<_>>();
-        sorted_data.sort_unstable();
-
-        for i in 0..all_data_vec.len() {
-            all_data_vec[i] = sorted_data.partition_point(|x| *x < all_data_vec[i]) as u64;
-        }
-
-        let all_data = Partition::new(&all_data_vec, counts.borrow(), displs.borrow());
-        root_process.scatter_varcount_into_root(&all_data, ranking);
+        // calculate and scatter ranks
+        let all_rankings_vec = local_rank(&all_data_vec);
+        let all_rankings_partition =
+            Partition::new(&all_rankings_vec, counts.borrow(), displs.borrow());
+        root_process.scatter_varcount_into_root(&all_rankings_partition, ranking);
     } else {
         root_process.gather_into(&(data.len() as i32));
         root_process.gather_varcount_into(data);
@@ -325,6 +330,7 @@ mod tests {
             let world = universe.world();
 
             inefficient_rank(&world, &data, &mut ranking);
+
             let expected = [3, 1, 0, 4, 2];
             assert_eq!(expected.len(), ranking.len());
             expected
