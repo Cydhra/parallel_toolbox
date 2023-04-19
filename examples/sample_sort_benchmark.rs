@@ -20,7 +20,7 @@ fn sample_sort_bench(c: &mut Criterion, world: &dyn Communicator) {
             BenchmarkId::new("throughput", format!("{}MB", 4 * size / MB)),
             &size,
             |b, &size| {
-                mpirion_bench!(world, b, size);
+                mpirion_bench!(sample_sort_kernel, b, world, size);
             }
         );
     }
