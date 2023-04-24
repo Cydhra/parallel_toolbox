@@ -105,13 +105,31 @@ impl<'a, const OVERSAMPLING: usize> ParallelPriorityQueue<'a, OVERSAMPLING> {
         }
 
         // perform select_k on the selection pool and distribute the result among all p processing units
-        let smallest_elements = parallel_select_k(self.communicator, &pool_buffer, world_size);
-        // TODO rewrite select_k to return indices, so that we can remove the elements from the pool
-        //  without accidentally removing duplicates
+        let mut smallest_elements = parallel_select_k(self.communicator, &pool_buffer, world_size);
+
+        // remove the selected elements from the pool buffer, but make sure to retain duplicates
+        // of the largest selected element, if they have not been selected multiple times
+        if !smallest_elements.is_empty() {
+            smallest_elements.sort_unstable();
+            let largest_element = *smallest_elements.last().unwrap();
+            let mut largest_element_amount = smallest_elements.len()
+                - smallest_elements.partition_point(|e| *e < largest_element);
+            pool_buffer.retain(|e| {
+                if *e == largest_element {
+                    if largest_element_amount > 0 {
+                        largest_element_amount -= 1;
+                        false
+                    } else {
+                        true
+                    }
+                } else {
+                    !smallest_elements.contains(e)
+                }
+            });
+        }
 
         // TODO also retain this buffer across multiple calls to delete_min to avoid
         //  repeatedly moving elements between the queue and the pool
-        pool_buffer.retain_mut(|e| !smallest_elements.contains(e));
         pool_buffer.iter().for_each(|e| self.local_insert(*e));
 
         // enumerate the smallest element using a prefix sum and distribute the elements among the processors accordingly
@@ -125,6 +143,7 @@ impl<'a, const OVERSAMPLING: usize> ParallelPriorityQueue<'a, OVERSAMPLING> {
         let mut send_counts = vec![0; world_size];
         let mut send_displs = vec![0; world_size];
 
+        #[allow(clippy::needless_range_loop)] // easier to read
         for i in prefix_sum - smallest_elements.len()..prefix_sum {
             send_counts[i] = 1;
         }
@@ -206,6 +225,25 @@ mod tests {
                 min, elements[0],
                 "deleteMin did not return the smallest element"
             );
+            assert_eq!(
+                pq.bin_heap.len(),
+                elements.len() - 1,
+                "deleteMin deleted too many elements"
+            );
+        }
+    }
+
+    rusty_fork_test! {
+        #[test]
+        fn test_delete_min_duplicates() {
+            let universe = mpi::initialize().unwrap();
+            let world = universe.world();
+
+            let mut pq = ParallelPriorityQueue::new_default(&world);
+            let elements = vec![10u64; 10];
+            pq.insert(&elements);
+            pq.delete_min();
+
             assert_eq!(
                 pq.bin_heap.len(),
                 elements.len() - 1,
