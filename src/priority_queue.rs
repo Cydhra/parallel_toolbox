@@ -11,6 +11,7 @@ use std::collections::BinaryHeap;
 pub struct ParallelPriorityQueue<'a, const OVERSAMPLING: usize> {
     communicator: &'a dyn Communicator,
     bin_heap: BinaryHeap<Reverse<u64>>,
+    selection_pool: Vec<u64>,
     rng: ThreadRng,
 }
 
@@ -24,16 +25,41 @@ impl<'a> ParallelPriorityQueue<'a, 4> {
 
 impl<'a, const OVERSAMPLING: usize> ParallelPriorityQueue<'a, OVERSAMPLING> {
     pub fn new(comm: &'a dyn Communicator) -> ParallelPriorityQueue<'a, OVERSAMPLING> {
+        let rt_world_size = (comm.size() as f64).sqrt() as usize;
+
         ParallelPriorityQueue {
             communicator: comm,
             bin_heap: BinaryHeap::new(),
+            selection_pool: Vec::with_capacity(OVERSAMPLING * rt_world_size * 2),
             rng: thread_rng(),
         }
     }
 
-    /// insert an element into the local queue
+    /// insert an element into the selection pool. If the selection pool would exceed its capacity,
+    /// the selection pool will be flushed into the local queue, and the new element will be inserted
+    /// into the queue as well.
     fn local_insert(&mut self, e: u64) {
-        self.bin_heap.push(Reverse(e))
+        let rt_world_size = (self.communicator.size() as f64).sqrt() as usize;
+
+        // if the element is larger than the minimum element in the local queue, insert it directly
+        // because we don't need it before the current minimum
+        if e > self.local_peek().unwrap_or(u64::MAX) {
+            self.bin_heap.push(Reverse(e));
+            return;
+        }
+
+        // otherwise insert it into the selection pool, unless the selection pool is full.
+        if self.selection_pool.len() < OVERSAMPLING * rt_world_size * 2 {
+            self.selection_pool.push(e);
+        } else {
+            // if the selection pool is full, flush it into the local queue and insert the new
+            // element into the local queue as well
+            self.selection_pool.iter().for_each(|&e| {
+                self.bin_heap.push(Reverse(e));
+            });
+            self.selection_pool.clear();
+            self.bin_heap.push(Reverse(e));
+        }
     }
 
     /// Delete the minimum element from the local queue
@@ -108,14 +134,17 @@ impl<'a, const OVERSAMPLING: usize> ParallelPriorityQueue<'a, OVERSAMPLING> {
         let world_size = self.communicator.size() as usize;
         let rt_world_size = (world_size as f64).sqrt() as usize;
 
-        // delete the sqrt(p) * OVERSAMPLING smallest elements and store them in the selection pool
-        let mut pool_buffer = vec![0u64; min(rt_world_size * OVERSAMPLING, self.bin_heap.len())];
-        for item in &mut pool_buffer {
-            *item = self.local_delete_min().unwrap();
+        // ensure the selection pool has enough elements
+        if self.selection_pool.len() < rt_world_size * OVERSAMPLING {
+            for _ in 0..min(rt_world_size * OVERSAMPLING, self.bin_heap.len()) {
+                let e = self.local_delete_min().unwrap();
+                self.selection_pool.push(e);
+            }
         }
 
         // perform select_k on the selection pool and distribute the result among all p processing units
-        let mut smallest_elements = parallel_select_k(self.communicator, &pool_buffer, world_size);
+        let mut smallest_elements =
+            parallel_select_k(self.communicator, &self.selection_pool, world_size);
 
         // remove the selected elements from the pool buffer, but make sure to retain duplicates
         // of the largest selected element, if they have not been selected multiple times
@@ -124,7 +153,7 @@ impl<'a, const OVERSAMPLING: usize> ParallelPriorityQueue<'a, OVERSAMPLING> {
             let largest_element = *smallest_elements.last().unwrap();
             let mut largest_element_amount = smallest_elements.len()
                 - smallest_elements.partition_point(|e| *e < largest_element);
-            pool_buffer.retain(|e| {
+            self.selection_pool.retain(|e| {
                 if *e == largest_element {
                     if largest_element_amount > 0 {
                         largest_element_amount -= 1;
@@ -138,9 +167,10 @@ impl<'a, const OVERSAMPLING: usize> ParallelPriorityQueue<'a, OVERSAMPLING> {
             });
         }
 
-        // TODO also retain this buffer across multiple calls to delete_min to avoid
-        //  repeatedly moving elements between the queue and the pool
-        pool_buffer.iter().for_each(|e| self.local_insert(*e));
+        // TODO maybe we should periodically flush the selection pool into the bin heap?
+        //  theoretically that should be unnecessary because of the insertion strategy, which
+        //  should ensure that the expensive edge case doesn't happen more often than without the
+        //  persistent selection pool, but I don't know if there is another reason to do it
 
         // enumerate the smallest element using a prefix sum and distribute the elements among the processors accordingly
         let mut prefix_sum = 0usize;
@@ -175,15 +205,19 @@ impl<'a, const OVERSAMPLING: usize> ParallelPriorityQueue<'a, OVERSAMPLING> {
 
         // check that no processor has received a larger element than the smallest local element
         let mut repeat_operation_flag = 0u8;
-        if recv_buffer > self.local_peek().or(Some(u64::MAX)).unwrap() {
+        if recv_buffer > self.local_peek().unwrap_or(u64::MAX) {
             self.communicator.all_reduce_into(
                 &1u8,
                 &mut repeat_operation_flag,
                 SystemOperation::max(),
             );
 
-            // todo increase local buffer size, so next time the small local element is part of
-            //  the selection pool
+            // add more elements to the selection pool, so the smallest element is guaranteed to be
+            // in it, and any more elements that might or might not be smaller as well
+            for _ in 0..min(rt_world_size * OVERSAMPLING, self.bin_heap.len()) {
+                let e = self.local_delete_min().unwrap();
+                self.selection_pool.push(e);
+            }
         } else {
             self.communicator.all_reduce_into(
                 &0u8,
@@ -262,7 +296,7 @@ mod tests {
                 "deleteMin did not return the smallest element"
             );
             assert_eq!(
-                pq.bin_heap.len(),
+                pq.bin_heap.len() + pq.selection_pool.len(),
                 elements.len() - 1,
                 "deleteMin deleted too many elements"
             );
@@ -281,7 +315,7 @@ mod tests {
             pq.delete_min();
 
             assert_eq!(
-                pq.bin_heap.len(),
+                pq.bin_heap.len() + pq.selection_pool.len(),
                 elements.len() - 1,
                 "deleteMin deleted too many elements"
             );
