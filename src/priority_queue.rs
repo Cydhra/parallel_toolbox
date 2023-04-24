@@ -36,6 +36,16 @@ impl<'a, const OVERSAMPLING: usize> ParallelPriorityQueue<'a, OVERSAMPLING> {
         self.bin_heap.push(Reverse(e))
     }
 
+    /// Delete the minimum element from the local queue
+    fn local_delete_min(&mut self) -> Option<u64> {
+        self.bin_heap.pop().map(|Reverse(e)| e)
+    }
+
+    /// Peek at the minimum element in the local queue
+    fn local_peek(&self) -> Option<u64> {
+        self.bin_heap.peek().map(|Reverse(e)| *e)
+    }
+
     /// Insert a constant amount of elements per processing unit. Insertion will redistribute the items among
     /// processors to ensure uniform data distribution
     ///
@@ -101,7 +111,7 @@ impl<'a, const OVERSAMPLING: usize> ParallelPriorityQueue<'a, OVERSAMPLING> {
         // delete the sqrt(p) * OVERSAMPLING smallest elements and store them in the selection pool
         let mut pool_buffer = vec![0u64; min(rt_world_size * OVERSAMPLING, self.bin_heap.len())];
         for item in &mut pool_buffer {
-            *item = self.bin_heap.pop().unwrap().0;
+            *item = self.local_delete_min().unwrap();
         }
 
         // perform select_k on the selection pool and distribute the result among all p processing units
@@ -163,8 +173,34 @@ impl<'a, const OVERSAMPLING: usize> ParallelPriorityQueue<'a, OVERSAMPLING> {
         self.communicator
             .all_to_all_varcount_into(&send_partition, &mut recv_partition);
 
-        // todo expensive edge case handling if the received element is not the smallest local element
-        recv_buffer
+        // check that no processor has received a larger element than the smallest local element
+        let mut repeat_operation_flag = 0u8;
+        if recv_buffer > self.local_peek().or(Some(u64::MAX)).unwrap() {
+            self.communicator.all_reduce_into(
+                &1u8,
+                &mut repeat_operation_flag,
+                SystemOperation::max(),
+            );
+
+            // todo increase local buffer size, so next time the small local element is part of
+            //  the selection pool
+        } else {
+            self.communicator.all_reduce_into(
+                &0u8,
+                &mut repeat_operation_flag,
+                SystemOperation::max(),
+            );
+        }
+
+        if repeat_operation_flag == 1 {
+            // re-insert the received element into the queue and repeat the operation,
+            // while all processors where the operation failed have increased their selection
+            // pool size
+            self.local_insert(recv_buffer);
+            self.delete_min()
+        } else {
+            recv_buffer
+        }
     }
 }
 
